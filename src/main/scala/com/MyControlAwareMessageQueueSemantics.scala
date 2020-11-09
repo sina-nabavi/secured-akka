@@ -1,4 +1,4 @@
-package com.example
+package com
 
 import java.util
 import java.util.concurrent.ConcurrentLinkedQueue
