@@ -1,12 +1,11 @@
 package com
 
-import java.util
 import java.util.concurrent.ConcurrentLinkedQueue
 
 import akka.actor.{ActorRef, ActorSystem}
 import akka.dispatch._
 import com.typesafe.config.Config
-import java.util.{Comparator, Deque, PriorityQueue, Queue}
+import java.util.{Queue}
 
 trait MyControlAwareMessageQueueSemantics
 
@@ -45,9 +44,12 @@ object MyControlAwareMailbox {
 
     override def dequeue(): Envelope =
     {
+      //Do not merge this with master because Envelope might not like to be interfered with
+      // Second way is to do not send stashed to self but pure normal that ruins permutation
       if(!stashedQueue.isEmpty){
         print("Stashed Message Polled")
-        stashedQueue.poll()
+        val stashedMsg = stashedQueue.poll()
+        Envelope(stashedMsg.message, stashedMsg.sender)
       }
       //if we want to block the actor wholly we can put a while(unNotified.isempty() == false) here to pop till empty
       if (!controlQueue.isEmpty) {

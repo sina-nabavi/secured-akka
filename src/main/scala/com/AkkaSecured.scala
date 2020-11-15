@@ -13,7 +13,7 @@ object SecureActor {
   final case class WhoToGreet(who: String)
   val OverallTimeOut = 10 seconds
   //add error type
-  case class NormalMessage(message: String)
+  case class NormalMessage(message: Any)
   case class ErrorMessage() extends MyControlMessage
   case class AskControlMessage(message: MyTransition, asker: ActorRef) extends MyControlMessage
   case class TellControlMessage(message: Any, flag: Boolean) extends MyControlMessage
@@ -35,6 +35,7 @@ class SecureActor extends Actor{
   implicit val ec: ExecutionContext = context.dispatcher
 
   def sendNotifications(transitions:Vector[MyTransition], automata: Automata): Unit={
+    Thread.sleep(5000)
     var allPres: Vector[MyTransition] = Vector.empty[MyTransition]
     for (transition <- transitions) {
       val pres: Vector[MyTransition] = automata.singleFindPre(transition)
@@ -53,6 +54,7 @@ class SecureActor extends Actor{
         var tellList: Vector[Future[TellControlMessage]] = Vector.empty[Future[TellControlMessage]]
         for (pre ← pres) {
           val msg: MessageBundle = pre.messageBundle
+          //why construct my transition from scratch? pre is not good enough?
           val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self)
           implicit val timeout = Timeout(10.seconds)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
@@ -103,11 +105,6 @@ class SecureActor extends Actor{
     case ErrorMessage => {
       println("Error Message" + " " + self.path.name)
     }
-    case StashedAskMessage(message) => {
-      println("Stashed Ask Message" + " " + self.path.name)
-      val tellControlMessage: TellControlMessage = tellStatusToSender(message.message.from, message.message.to, message.message.messageBundle,message.message.regTransition,message.asker)
-      sender() ! tellControlMessage
-    }
 
     case NotifyControlMessage(asker) => {
       println("Notify Message" + " " + self.path.name)
@@ -128,7 +125,7 @@ class SecureActor extends Actor{
 
     case AskControlMessage(message, asker) =>
       if(unNotified.isEmpty) {
-        println("Not Stashed Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
+        println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
         val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
         sender() ! tellControlMessage
       }
@@ -141,17 +138,15 @@ class SecureActor extends Actor{
   val manageNormals: Receive= {
     case NormalMessage(message) =>
       if(unNotified.isEmpty) {
-        println("Not Stashed Normal Message " + message + " " + self.path.name)
+        self ! message
+        //println("Not Stashed Normal Message " + message + " " + self.path.name)
 
       } else
         stashNormalQueue = stashNormalQueue :+ StashedNormalMessage(NormalMessage(message))
 
-    case StashedNormalMessage(message) => {
-      println("Stashed Normal Message" + " " + self.path.name)
-    }
   }
   //user should write it
-  def receive = manageControls.orElse(manageNormals)
+  //def receive = manageControls.orElse(manageNormals)
   def tellStatusToSender(from: Int, to: Int, messageBundle: MessageBundle, regTransiton: Boolean, asker: ActorRef): TellControlMessage ={
           var answer = true
           val transition: MyTransition = MyTransition(from, to, messageBundle, regTransiton)
@@ -171,20 +166,22 @@ class SecureActor extends Actor{
 
 
 object MainApp extends App {
-  import SecureActor._
-  val system: ActorSystem = ActorSystem("helloAkka")
-  val firstActor: ActorRef =
-    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
-  val secondActor: ActorRef =
-    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
-  val customAutomata: Automata = new Automata
-  val customBundle: MessageBundle = new MessageBundle(secondActor, NormalMessage("a0"), firstActor)
-  val customTransition: MyTransition = new MyTransition(0,1, customBundle ,true)
-  val customBundle2: MessageBundle = new MessageBundle(firstActor, NormalMessage("b1"),secondActor)
-  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
-  customAutomata.addTransition(customTransition)
-  customAutomata.addTransition(customTransition2)
-  customAutomata.addLastTransition(2)
-  secondActor ! SendOrderMessage(firstActor, NormalMessage("a0"), customAutomata)
-  firstActor ! SendOrderMessage(secondActor, NormalMessage("b1"), customAutomata)
+//  import SecureActor._
+//  val system: ActorSystem = ActorSystem("helloAkka")
+//  val firstActor: ActorRef =
+//    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
+//  val secondActor: ActorRef =
+//    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
+//  val customAutomata: Automata = new Automata
+//  val customBundle: MessageBundle = new MessageBundle(secondActor, NormalMessage("a0"), firstActor)
+//  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
+//  val customBundle2: MessageBundle = new MessageBundle(firstActor, NormalMessage("b1"),secondActor)
+//  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
+//  customAutomata.addTransition(customTransition)
+//  customAutomata.addTransition(customTransition2)
+//  customAutomata.addLastTransition(2)
+//  secondActor ! SendOrderMessage(firstActor, NormalMessage("a0"), customAutomata)
+//  secondActor ! SendOrderMessage(secondActor, NormalMessage("c2"), customAutomata)
+//  firstActor ! SendOrderMessage(secondActor, NormalMessage("b1"), customAutomata)
+//  secondActor ! SendOrderMessage(secondActor, NormalMessage("c1"), customAutomata)
 }
