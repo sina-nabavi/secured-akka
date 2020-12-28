@@ -22,8 +22,8 @@ object SecureActor {
   case class AskControlMessage(message: MyTransition, asker: ActorRef, vc: Array[Int]) extends MyControlMessage
   case class TellControlMessage(message: Any, flag: Boolean, vc: Array[Int]) extends MyControlMessage
   case class NotifyControlMessage(asker: ActorRef, vc: Array[Int]) extends MyControlMessage
-  case class StashedNormalMessage(message: NormalMessageWithVectorClock, vc: Array[Int]) extends StashedMessage
-  case class StashedAskMessage(message: AskControlMessage, vc: Array[Int]) extends StashedMessage
+  case class StashedNormalMessage(message: NormalMessageWithVectorClock) extends StashedMessage
+  case class StashedAskMessage(message: AskControlMessage) extends StashedMessage
   //Did not include here to make it transparent
   case class SendOrderMessage(to: ActorRef, message: NormalMessage, automata: Automata)
 }
@@ -139,18 +139,19 @@ class SecureActor extends Actor{
         while (!stashAskQueue.isEmpty) {
           //Here that we have stashed should we change the vector clock of the stashed messages
           vectorClock(hash) += 1
-          self ! StashedAskMessage(stashAskQueue.last, vectorClock)
+          self ! StashedAskMessage(AskControlMessage(stashAskQueue.last.message,stashAskQueue.last.asker, vectorClock))
           stashAskQueue = stashAskQueue.init
         }
         while (!stashNormalQueue.isEmpty) {
           vectorClock(hash) +=1
-          self ! StashedNormalMessage(stashNormalQueue.last, vectorClock)
+          self ! StashedNormalMessage(NormalMessageWithVectorClock(stashNormalQueue.last.message, vectorClock))
           stashNormalQueue = stashNormalQueue.init
         }
       }
     }
 
     case AskControlMessage(message, asker, vc) =>
+      updateVectorClock(vc)
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
         vectorClock(hash) += 1
