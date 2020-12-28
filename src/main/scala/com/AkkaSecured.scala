@@ -1,16 +1,17 @@
 package com
 
 import akka.actor.{Actor, ActorRef, ActorSystem, Props}
-import scala.concurrent.{Await}
-import akka.util.{Timeout}
+
+import scala.concurrent.Await
+import akka.util.Timeout
 import akka.pattern.ask
+
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 
 
 object SecureActor {
   def props(): Props = Props(new SecureActor())
-  final case class WhoToGreet(who: String)
   val OverallTimeOut = 10 seconds
   //add error type
   case class NormalMessage(message: Any)
@@ -26,6 +27,11 @@ object SecureActor {
 
 class SecureActor extends Actor{
   import SecureActor._
+  val name: String = self.path.name
+  val hash: Int = (name.hashCode() % 100).abs
+  //there is a 1/100 chance for two strings to have a same hash
+  println("my name is " + name + " and my vector clock index is " + hash)
+  var vectorClock: Array[Int] = Array.fill(100)(0)
   var greeting = ""
   var unNotified: Vector[ActorRef] = Vector[ActorRef]()
   //history defined here, i guess this is right, but maybe you need to change it.
