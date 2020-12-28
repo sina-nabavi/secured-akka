@@ -13,32 +13,43 @@ import scala.concurrent.duration._
 object SecureActor {
   def props(): Props = Props(new SecureActor())
   val OverallTimeOut = 10 seconds
+  val MaxActorNumber: Int = 100
   //add error type
+  //Ask if we should send by value: I guessed that actors wont change it so its okay
+  case class NormalMessageWithVectorClock(message: Any, vc: Array[Int])
   case class NormalMessage(message: Any)
-  case class ErrorMessage() extends MyControlMessage
-  case class AskControlMessage(message: MyTransition, asker: ActorRef) extends MyControlMessage
-  case class TellControlMessage(message: Any, flag: Boolean) extends MyControlMessage
-  case class NotifyControlMessage(asker: ActorRef) extends MyControlMessage
-  case class StashedNormalMessage(message: NormalMessage) extends StashedMessage
-  case class StashedAskMessage(message: AskControlMessage) extends StashedMessage
-  case class SendOrderMessage(to: ActorRef, message: Any, automata: Automata)
+  case class ErrorMessage(vc: Array[Int]) extends MyControlMessage
+  case class AskControlMessage(message: MyTransition, asker: ActorRef, vc: Array[Int]) extends MyControlMessage
+  case class TellControlMessage(message: Any, flag: Boolean, vc: Array[Int]) extends MyControlMessage
+  case class NotifyControlMessage(asker: ActorRef, vc: Array[Int]) extends MyControlMessage
+  case class StashedNormalMessage(message: NormalMessageWithVectorClock, vc: Array[Int]) extends StashedMessage
+  case class StashedAskMessage(message: AskControlMessage, vc: Array[Int]) extends StashedMessage
+  //Did not include here to make it transparent
+  case class SendOrderMessage(to: ActorRef, message: NormalMessage, automata: Automata)
 }
 
 
 class SecureActor extends Actor{
   import SecureActor._
   val name: String = self.path.name
-  val hash: Int = (name.hashCode() % 100).abs
+  val hash: Int = (name.hashCode() % MaxActorNumber).abs
   //there is a 1/100 chance for two strings to have a same hash
   println("my name is " + name + " and my vector clock index is " + hash)
-  var vectorClock: Array[Int] = Array.fill(100)(0)
+  var vectorClock: Array[Int] = Array.fill(MaxActorNumber)(0)
   var greeting = ""
   var unNotified: Vector[ActorRef] = Vector[ActorRef]()
   //history defined here, i guess this is right, but maybe you need to change it.
   var history: Vector[MyTransition] = Vector[MyTransition]()
-  var stashNormalQueue: Vector[StashedNormalMessage] = Vector[StashedNormalMessage]()
-  var stashAskQueue: Vector[StashedAskMessage] = Vector[StashedAskMessage]()
+  var stashNormalQueue: Vector[NormalMessageWithVectorClock] = Vector[NormalMessageWithVectorClock]()
+  var stashAskQueue: Vector[AskControlMessage] = Vector[AskControlMessage]()
   implicit val ec: ExecutionContext = context.dispatcher
+  // what about our own clock value if it's bigger in other actor's vc?
+  def updateVectorClock(vc: Array[Int]): Unit={
+    for(i <- 0 to MaxActorNumber - 1){
+      if(vc(i) > vectorClock(i))
+        vectorClock(i) = vc(i)
+    }
+  }
 
   def sendNotifications(transitions:Vector[MyTransition], automata: Automata): Unit={
     Thread.sleep(5000)
@@ -49,7 +60,8 @@ class SecureActor extends Actor{
     }
     for (pre ← allPres) {
       val msg: MessageBundle = pre.messageBundle
-      val notifMsg = NotifyControlMessage(self)
+      vectorClock(hash) += 1
+      val notifMsg = NotifyControlMessage(self,vectorClock)
       msg.s ! notifMsg
     }
   }
@@ -61,7 +73,8 @@ class SecureActor extends Actor{
         for (pre ← pres) {
           val msg: MessageBundle = pre.messageBundle
           //why construct my transition from scratch? pre is not good enough?
-          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self)
+          vectorClock(hash) += 1
+          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, vectorClock)
           implicit val timeout = Timeout(10.seconds)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
           tellList = tellList :+ future
@@ -73,6 +86,7 @@ class SecureActor extends Actor{
           if(tellRes.flag == true){
             preSent = preSent + 1
           }
+          updateVectorClock(tellRes.vc)
         }
         // in the original problem we should check whether all the messages are sent or not
         if(preSent >= 1){
@@ -84,7 +98,7 @@ class SecureActor extends Actor{
     false
   }
 
-  def sendSecureMessage(receiver: ActorRef, message: Any, automata: Automata): Unit = {
+  def sendSecureMessage(receiver: ActorRef, message: NormalMessage, automata: Automata): Unit = {
     // assume that we have the automata in the Actor
     val msgBundle: MessageBundle = new MessageBundle(self, message, receiver)
     //for all transitions
@@ -92,14 +106,16 @@ class SecureActor extends Actor{
     val transitionStatus: Vector[Int] = Vector.empty[Int]
     if(synchronizedMonitoring(transitions, transitionStatus, automata)){
         //should send error type message
-        receiver ! ErrorMessage
+        vectorClock(hash) += 1
+        receiver ! ErrorMessage(vectorClock)
     }
     else{
         //println("im here to send normal" + " " + self.path)
         for (transition <- transitions) {
           history = history :+ transition
         }
-        receiver ! message
+        vectorClock(hash) += 1
+        receiver ! NormalMessageWithVectorClock(message.message,vectorClock)
     }
     sendNotifications(transitions, automata)
   }
@@ -108,45 +124,54 @@ class SecureActor extends Actor{
     case SendOrderMessage(to, message, automata) => {
       sendSecureMessage(to, message, automata)
     }
-    case ErrorMessage => {
-      println("Error Message" + " " + self.path.name)
+    case ErrorMessage(vc) => {
+      updateVectorClock(vc)
+      println("Error Message" + " " + self.path.name + "with vc " + vectorClock)
     }
 
-    case NotifyControlMessage(asker) => {
-      println("Notify Message" + " " + self.path.name)
+    case NotifyControlMessage(asker,vc) => {
+      updateVectorClock(vc)
+      println("Notify Message" + " " + self.path.name + "with vc " + vectorClock)
       unNotified = unNotified.filter(_ != asker)
       // i assume that here unnotified just became empty cause we dont get notify message
       // unless we have something in unnotified so if its empty now it's just became empty
       if (unNotified.isEmpty) {
         while (!stashAskQueue.isEmpty) {
-          self ! stashAskQueue.last.message
+          //Here that we have stashed should we change the vector clock of the stashed messages
+          vectorClock(hash) += 1
+          self ! StashedAskMessage(stashAskQueue.last, vectorClock)
           stashAskQueue = stashAskQueue.init
         }
         while (!stashNormalQueue.isEmpty) {
-          self ! stashNormalQueue.last.message
+          vectorClock(hash) +=1
+          self ! StashedNormalMessage(stashNormalQueue.last, vectorClock)
           stashNormalQueue = stashNormalQueue.init
         }
       }
     }
 
-    case AskControlMessage(message, asker) =>
+    case AskControlMessage(message, asker, vc) =>
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
+        vectorClock(hash) += 1
         val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
         sender() ! tellControlMessage
       }
       else {
-        val askmsg: AskControlMessage = AskControlMessage(message, asker)
-        stashAskQueue = stashAskQueue :+ StashedAskMessage(askmsg)
+        val askmsg: AskControlMessage = AskControlMessage(message, asker,vc)
+        stashAskQueue = stashAskQueue :+ askmsg
       }
   }
 
   val manageNormals: Receive = {
-    case NormalMessage(message) =>
+    case NormalMessageWithVectorClock(message,vc) =>
+      updateVectorClock(vc)
       if(unNotified.isEmpty) {
+        vectorClock(hash) += 1
+        //here we don't send
         self ! message
       } else
-        stashNormalQueue = stashNormalQueue :+ StashedNormalMessage(NormalMessage(message))
+        stashNormalQueue = stashNormalQueue :+ NormalMessageWithVectorClock(message,vectorClock)
   }
 
   //user should write it
@@ -158,7 +183,7 @@ class SecureActor extends Actor{
             answer = true
           else
             answer = false
-          val tellControlMessage: TellControlMessage = TellControlMessage(transition, answer)
+          val tellControlMessage: TellControlMessage = TellControlMessage(transition, answer, vectorClock)
           //TODO check history and automata, send a tell message to sender with msg and true/false, sender will erase that msg from his "Pres set"
           //assumed that tell does just like !
           println(tellControlMessage)
