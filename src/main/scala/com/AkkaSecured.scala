@@ -9,6 +9,7 @@ import akka.pattern.ask
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 
+//we can only transmit vector clock on Normal Message to reduce the cost
 
 object SecureActor {
   def props(): Props = Props(new SecureActor())
@@ -60,7 +61,6 @@ class SecureActor extends Actor{
     }
     for (pre ← allPres) {
       val msg: MessageBundle = pre.messageBundle
-      vectorClock(hash) += 1
       val notifMsg = NotifyControlMessage(self,vectorClock)
       msg.s ! notifMsg
     }
@@ -73,7 +73,6 @@ class SecureActor extends Actor{
         for (pre ← pres) {
           val msg: MessageBundle = pre.messageBundle
           //why construct my transition from scratch? pre is not good enough?
-          vectorClock(hash) += 1
           val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, vectorClock)
           implicit val timeout = Timeout(10.seconds)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
@@ -107,6 +106,7 @@ class SecureActor extends Actor{
     if(synchronizedMonitoring(transitions, transitionStatus, automata)){
         //should send error type message
         vectorClock(hash) += 1
+        println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + "ERROR")
         receiver ! ErrorMessage(vectorClock)
     }
     else{
@@ -115,6 +115,7 @@ class SecureActor extends Actor{
           history = history :+ transition
         }
         vectorClock(hash) += 1
+        println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + message)
         receiver ! NormalMessageWithVectorClock(message.message,vectorClock)
     }
     sendNotifications(transitions, automata)
@@ -126,24 +127,22 @@ class SecureActor extends Actor{
     }
     case ErrorMessage(vc) => {
       updateVectorClock(vc)
-      println("Error Message" + " " + self.path.name + "with vc " + vectorClock)
+      println("Error Message" + " " + self.path.name)
     }
 
     case NotifyControlMessage(asker,vc) => {
       updateVectorClock(vc)
-      println("Notify Message" + " " + self.path.name + "with vc " + vectorClock)
+      println("Notify Message" + " " + self.path.name)
       unNotified = unNotified.filter(_ != asker)
       // i assume that here unnotified just became empty cause we dont get notify message
       // unless we have something in unnotified so if its empty now it's just became empty
       if (unNotified.isEmpty) {
         while (!stashAskQueue.isEmpty) {
           //Here that we have stashed should we change the vector clock of the stashed messages
-          vectorClock(hash) += 1
           self ! StashedAskMessage(AskControlMessage(stashAskQueue.last.message,stashAskQueue.last.asker, vectorClock))
           stashAskQueue = stashAskQueue.init
         }
         while (!stashNormalQueue.isEmpty) {
-          vectorClock(hash) +=1
           self ! StashedNormalMessage(NormalMessageWithVectorClock(stashNormalQueue.last.message, vectorClock))
           stashNormalQueue = stashNormalQueue.init
         }
@@ -154,7 +153,6 @@ class SecureActor extends Actor{
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
-        vectorClock(hash) += 1
         val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
         sender() ! tellControlMessage
       }
@@ -168,11 +166,10 @@ class SecureActor extends Actor{
     case NormalMessageWithVectorClock(message,vc) =>
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
-        vectorClock(hash) += 1
         //here we don't send
         self ! message
       } else
-        stashNormalQueue = stashNormalQueue :+ NormalMessageWithVectorClock(message,vectorClock)
+        stashNormalQueue = stashNormalQueue :+ NormalMessageWithVectorClock(message,vc)
   }
 
   //user should write it
