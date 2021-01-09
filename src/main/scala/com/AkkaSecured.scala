@@ -20,7 +20,7 @@ object SecureActor {
   case class NormalMessageWithVectorClock(message: Any, vc: Array[Int])
   case class NormalMessage(message: Any)
   case class ErrorMessage(vc: Array[Int]) extends MyControlMessage
-  case class AskControlMessage(message: MyTransition, asker: ActorRef, vc: Array[Int]) extends MyControlMessage
+  case class AskControlMessage(message: MyTransition, asker: ActorRef, dest: ActorRef, vc: Array[Int], messsageType: String, inspectedTransition: MyTransition, isBlocked: Boolean) extends MyControlMessage
   case class TellControlMessage(message: Any, flag: Boolean, vc: Array[Int]) extends MyControlMessage
   case class NotifyControlMessage(asker: ActorRef, vc: Array[Int]) extends MyControlMessage
   case class StashedNormalMessage(message: NormalMessageWithVectorClock) extends StashedMessage
@@ -73,7 +73,10 @@ abstract class SecureActor extends Actor{
         for (pre ← pres) {
           val msg: MessageBundle = pre.messageBundle
           //why construct my transition from scratch? pre is not good enough?
-          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, vectorClock)
+          var isBlocked: Boolean = false
+          if (automata.isLastTransition(pre))
+            isBlocked = true
+          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, "ask",transition, isBlocked)
           implicit val timeout = Timeout(10.seconds)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
           tellList = tellList :+ future
@@ -149,7 +152,7 @@ abstract class SecureActor extends Actor{
       }
     }
 
-    case AskControlMessage(message, asker, vc) =>
+    case AskControlMessage(message, asker, dest, vc, msgType, inspectedTrans, isBlocked) =>
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
