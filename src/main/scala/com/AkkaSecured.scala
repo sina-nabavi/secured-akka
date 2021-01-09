@@ -12,7 +12,7 @@ import scala.concurrent.duration._
 //we can only transmit vector clock on Normal Message to reduce the cost
 
 object SecureActor {
-  def props(): Props = Props(new SecureActor())
+//  def props(): Props = Props(new SecureActor())
   val OverallTimeOut = 10 seconds
   val MaxActorNumber: Int = 100
   //add error type
@@ -30,7 +30,7 @@ object SecureActor {
 }
 
 
-class SecureActor extends Actor{
+abstract class SecureActor extends Actor{
   import SecureActor._
   val name: String = self.path.name
   val hash: Int = (name.hashCode() % MaxActorNumber).abs
@@ -160,9 +160,6 @@ class SecureActor extends Actor{
         val askmsg: AskControlMessage = AskControlMessage(message, asker,vc)
         stashAskQueue = stashAskQueue :+ askmsg
       }
-  }
-
-  val manageNormals: Receive = {
     case NormalMessageWithVectorClock(message,vc) =>
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
@@ -172,8 +169,12 @@ class SecureActor extends Actor{
         stashNormalQueue = stashNormalQueue :+ NormalMessageWithVectorClock(message,vc)
   }
 
+//  val manageNormals: Receive = {
+//
+//  }
+
   //user should write it
-  def receive = manageControls.orElse(manageNormals)
+  //def receive = manageControls.orElse(manageNormals)
   def tellStatusToSender(from: Int, to: Int, messageBundle: MessageBundle, regTransiton: Boolean, asker: ActorRef): TellControlMessage ={
           var answer = true
           val transition: MyTransition = MyTransition(from, to, messageBundle, regTransiton)
@@ -192,23 +193,23 @@ class SecureActor extends Actor{
 }
 
 
-object MainApp extends App {
-  import SecureActor._
-  val system: ActorSystem = ActorSystem("helloAkka")
-  val firstActor: ActorRef =
-    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
-  val secondActor: ActorRef =
-    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
-  val customAutomata: Automata = new Automata
-  val customBundle: MessageBundle = new MessageBundle(secondActor, NormalMessage("a0"), firstActor)
-  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
-  val customBundle2: MessageBundle = new MessageBundle(firstActor, NormalMessage("b1"),secondActor)
-  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
-  customAutomata.addTransition(customTransition)
-  customAutomata.addTransition(customTransition2)
-  customAutomata.addLastTransition(2)
-  secondActor ! SendOrderMessage(firstActor, NormalMessage("a0"), customAutomata)
-  secondActor ! SendOrderMessage(secondActor, NormalMessage("c2"), customAutomata)
-  firstActor ! SendOrderMessage(secondActor, NormalMessage("b1"), customAutomata)
-  secondActor ! SendOrderMessage(secondActor, NormalMessage("c1"), customAutomata)
-}
+//object MainApp extends App {
+//  import SecureActor._
+//  val system: ActorSystem = ActorSystem("helloAkka")
+//  val firstActor: ActorRef =
+//    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
+//  val secondActor: ActorRef =
+//    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
+//  val customAutomata: Automata = new Automata
+//  val customBundle: MessageBundle = new MessageBundle(secondActor, NormalMessage("a0"), firstActor)
+//  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
+//  val customBundle2: MessageBundle = new MessageBundle(firstActor, NormalMessage("b1"),secondActor)
+//  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
+//  customAutomata.addTransition(customTransition)
+//  customAutomata.addTransition(customTransition2)
+//  customAutomata.addLastTransition(2)
+//  secondActor ! SendOrderMessage(firstActor, NormalMessage("a0"), customAutomata)
+//  secondActor ! SendOrderMessage(secondActor, NormalMessage("c2"), customAutomata)
+//  firstActor ! SendOrderMessage(secondActor, NormalMessage("b1"), customAutomata)
+//  secondActor ! SendOrderMessage(secondActor, NormalMessage("c1"), customAutomata)
+//}
