@@ -40,9 +40,10 @@ class SecureActor extends Actor{
   var greeting = ""
   var unNotified: Vector[ActorRef] = Vector[ActorRef]()
   //history defined here, i guess this is right, but maybe you need to change it.
-  var history: Vector[List[Any]] = Vector[List[Any]]()
+  var history: Vector[(MyTransition, Array[Int], String)] = Vector[(MyTransition, Array[Int], String)]()
   var stashNormalQueue: Vector[NormalMessageWithVectorClock] = Vector[NormalMessageWithVectorClock]()
   var stashAskQueue: Vector[AskControlMessage] = Vector[AskControlMessage]()
+  var pendingAsk: Map[(MyTransition, Array[Int]), Vector[ActorRef]] = Map()
   implicit val ec: ExecutionContext = context.dispatcher
   // what about our own clock value if it's bigger in other actor's vc?
   def updateVectorClock(vc: Array[Int]): Unit={
@@ -66,6 +67,21 @@ class SecureActor extends Actor{
     }
   }
   // transition status is still not used
+  def asynchronizedMonitoring(transitions: Vector[MyTransition], transitionStatus: Vector[Int],  automata: Automata): Unit ={
+    //build awaiting tell messages
+    for (transition ← transitions) {
+      val pendingIndex = (transition, vectorClock)
+      var pendingList : Vector[ActorRef] = Vector[ActorRef]()
+      val pres: Vector[MyTransition] = automata.singleFindPre(transition)
+      for (pre ← pres) {
+        val msg: MessageBundle = pre.messageBundle
+        val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, "ask", transition, false)
+        msg.s ! ctrlMsg
+        pendingList = pendingList :+ msg.s
+      }
+      pendingAsk += (pendingIndex -> pendingList)
+    }
+  }
   def synchronizedMonitoring(transitions: Vector[MyTransition], transitionStatus: Vector[Int],  automata: Automata): Boolean ={
       for (transition ← transitions) {
         val pres: Vector[MyTransition] = automata.singleFindPre(transition)
@@ -74,9 +90,9 @@ class SecureActor extends Actor{
           val msg: MessageBundle = pre.messageBundle
           //why construct my transition from scratch? pre is not good enough?
           var isBlocked: Boolean = false
-          if (automata.isLastTransition(pre))
-            isBlocked = true
-          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, "ask",transition, isBlocked)
+//          if (automata.isLastTransition(pre))
+//            isBlocked = true
+          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, "ask",transition, true)
           implicit val timeout = Timeout(10.seconds)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
           tellList = tellList :+ future
@@ -105,29 +121,56 @@ class SecureActor extends Actor{
     val msgBundle: MessageBundle = new MessageBundle(self, message, receiver)
     //for all transitions
     val transitions = automata.findTransitionByMessageBundle(msgBundle)
+    var isLast: Boolean = false
+    for(transition <- transitions){
+      if (automata.isLastTransition(transition)) {
+        isLast = true
+      }
+    }
+    if(isLast)
+      sendBlocking(receiver, message, automata, transitions)
+    else
+      sendNonBlocking(receiver, message, automata, transitions)
+  }
+
+  def sendNonBlocking(receiver: ActorRef, message: SecureActor.NormalMessage, automata: Automata, transitions: Vector[MyTransition]): Unit = {
+    vectorClock(hash) += 1
+    println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + message)
+    //not used
+    val transitionStatus: Vector[Int] = Vector.empty[Int]
+    receiver ! NormalMessageWithVectorClock(message.message,vectorClock)
+    asynchronizedMonitoring(transitions, transitionStatus, automata)
+    addToHistory(transitions, automata)
+  }
+
+  def addToHistory(transitions: Vector[MyTransition], automata: Automata): Unit = {
+    for (transition <- transitions) {
+      val pres: Vector[MyTransition] = automata.singleFindPre(transition)
+      if (pres.length == 0 && automata.isLastTransition(transition) == false)
+        history = history :+ (transition, vectorClock, "frm")
+      else
+        history = history :+ (transition, vectorClock, "?")
+    }
+  }
+
+  def sendBlocking(receiver: ActorRef, message: NormalMessage, automata: Automata,transitions: Vector[MyTransition] ): Unit = {
+    //not used
     val transitionStatus: Vector[Int] = Vector.empty[Int]
     if(synchronizedMonitoring(transitions, transitionStatus, automata)){
-        //should send error type message
-        vectorClock(hash) += 1
-        println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + "ERROR")
-        receiver ! ErrorMessage(vectorClock)
+      //should send error type message
+      vectorClock(hash) += 1
+      println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + "ERROR")
+      receiver ! ErrorMessage(vectorClock)
     }
     else{
-        //println("im here to send normal" + " " + self.path)
-        for (transition <- transitions) {
-          val pres: Vector[MyTransition] = automata.singleFindPre(transition)
-          if (pres.length == 0 && automata.isLastTransition(transition) == false)
-            history = history :+ List(transition, vectorClock, "frm")
-          else
-            history = history :+ List(transition, vectorClock, "?")
-        }
-        vectorClock(hash) += 1
-        println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + message)
-        receiver ! NormalMessageWithVectorClock(message.message,vectorClock)
+      //println("im here to send normal" + " " + self.path)
+      addToHistory(transitions, automata)
+      vectorClock(hash) += 1
+      println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + message)
+      receiver ! NormalMessageWithVectorClock(message.message,vectorClock)
     }
     sendNotifications(transitions, automata)
   }
-
   val manageControls : Receive = {
     case SendOrderMessage(to, message, automata) => {
       sendSecureMessage(to, message, automata)
