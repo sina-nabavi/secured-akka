@@ -20,8 +20,8 @@ object SecureActor {
   case class NormalMessageWithVectorClock(message: Any, vc: Array[Int])
   case class NormalMessage(message: Any)
   case class ErrorMessage(vc: Array[Int]) extends MyControlMessage
-  case class AskControlMessage(message: MyTransition, asker: ActorRef, dest: ActorRef, vc: Array[Int], messsageType: String, inspectedTransition: MyTransition, isBlocked: Boolean) extends MyControlMessage
-  case class TellControlMessage(message: Any, flag: Boolean, vc: Array[Int]) extends MyControlMessage
+  case class AskControlMessage(message: MyTransition, asker: ActorRef, dest: ActorRef, vc: Array[Int], inspectedTransition: MyTransition, isBlocked: Boolean, repRecs: Vector[(MyTransition, Array[Int], String)]) extends MyControlMessage
+  case class TellControlMessage(message: Any, flag: Boolean, teller: ActorRef, dest: ActorRef, vc: Array[Int], repRecs: Vector[(MyTransition, Array[Int], String)]) extends MyControlMessage
   case class NotifyControlMessage(asker: ActorRef, vc: Array[Int]) extends MyControlMessage
   case class StashedNormalMessage(message: NormalMessageWithVectorClock) extends StashedMessage
   case class StashedAskMessage(message: AskControlMessage) extends StashedMessage
@@ -44,6 +44,7 @@ class SecureActor extends Actor{
   var stashNormalQueue: Vector[NormalMessageWithVectorClock] = Vector[NormalMessageWithVectorClock]()
   var stashAskQueue: Vector[AskControlMessage] = Vector[AskControlMessage]()
   var pendingAsk: Map[(MyTransition, Array[Int]), Vector[ActorRef]] = Map()
+  var pendingMonitorMessage: Vector[MyControlMessage] = vectorClock[MyControlMessage]()
   implicit val ec: ExecutionContext = context.dispatcher
   // what about our own clock value if it's bigger in other actor's vc?
   def updateVectorClock(vc: Array[Int]): Unit={
@@ -51,6 +52,30 @@ class SecureActor extends Actor{
       if(vc(i) > vectorClock(i))
         vectorClock(i) = vc(i)
     }
+  }
+
+  def vectorClockLess(vc1: Array[Int], vc2: Array[Int]): Boolean={
+    for(i <- 0 to MaxActorNumber - 1){
+      if(vc1(i) > vc2(i))
+        false
+    }
+    !(vc1 == vc2)
+  }
+
+  def vectorClockConcurent(vc1: Array[Int], vc2: Array[Int]): Boolean={
+    var hasLess: Boolean = false
+    var hasGreater: Boolean = false
+    for(i <- 0 to MaxActorNumber - 1){
+      if(vc1(i) < vc2(i))
+        hasLess = true
+      if(vc1(i) > vc2(i))
+        hasGreater = true
+    }
+    (hasLess && hasGreater) || (vc1 == vc2)
+  }
+
+  def vectorClockNotGreater(vc1: Array[Int], vc2: Array[Int]): Boolean={
+    vectorClockLess(vc1,vc2) || vectorClockConcurent(vc1,vc2)
   }
 
   def sendNotifications(transitions:Vector[MyTransition], automata: Automata): Unit={
@@ -73,9 +98,10 @@ class SecureActor extends Actor{
       val pendingIndex = (transition, vectorClock)
       var pendingList : Vector[ActorRef] = Vector[ActorRef]()
       val pres: Vector[MyTransition] = automata.singleFindPre(transition)
+      val res:  Vector[(MyTransition, Array[Int], String)] = Vector()
       for (pre ← pres) {
         val msg: MessageBundle = pre.messageBundle
-        val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, "ask", transition, false)
+        val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, transition, false, res)
         msg.s ! ctrlMsg
         pendingList = pendingList :+ msg.s
       }
@@ -86,13 +112,14 @@ class SecureActor extends Actor{
       for (transition ← transitions) {
         val pres: Vector[MyTransition] = automata.singleFindPre(transition)
         var tellList: Vector[Future[TellControlMessage]] = Vector.empty[Future[TellControlMessage]]
+        val res:  Vector[(MyTransition, Array[Int], String)] = Vector()
         for (pre ← pres) {
           val msg: MessageBundle = pre.messageBundle
           //why construct my transition from scratch? pre is not good enough?
           var isBlocked: Boolean = false
 //          if (automata.isLastTransition(pre))
 //            isBlocked = true
-          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, "ask",transition, true)
+          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock,transition, true, res)
           implicit val timeout = Timeout(10.seconds)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
           tellList = tellList :+ future
@@ -200,7 +227,7 @@ class SecureActor extends Actor{
       }
     }
 
-    case AskControlMessage(message, asker, dest, vc, msgType, inspectedTrans, isBlocked) =>
+    case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked, res) =>
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
@@ -208,11 +235,17 @@ class SecureActor extends Actor{
         sender() ! tellControlMessage
       }
       else {
-        val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, msgType, inspectedTrans, isBlocked)
+        val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked, res)
         stashAskQueue = stashAskQueue :+ askmsg
       }
-    case TellControlMessage =>
-      //println("TELL GEREFTIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIM")
+
+    case TellControlMessage(message, flag, teller, dest, vc, repRecs) =>
+      for((pending, actorList) <- pendingAsk){
+        if(pending._1 == message && pending._2(hash) == vc(hash)){
+          actorList filterNot teller.==
+          //if actorList.length == 0 ?
+        }
+      }
     case NormalMessageWithVectorClock(message,vc) =>
       //increment vectorClock
       updateVectorClock(vc)
@@ -233,8 +266,8 @@ class SecureActor extends Actor{
           var answer = true
           val transition: MyTransition = MyTransition(from, to, messageBundle, regTransiton)
           answer = false
-          for(list <- history){
-            if(list(0) == transition){
+          for(triple <- history){
+            if(triple._1 == transition){
               answer = true
             }
           }
