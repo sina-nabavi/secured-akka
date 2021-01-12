@@ -168,7 +168,10 @@ class SecureActor extends Actor{
         val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, msgType, inspectedTrans, isBlocked)
         stashAskQueue = stashAskQueue :+ askmsg
       }
+    case TellControlMessage =>
+      //println("TELL GEREFTIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIM")
     case NormalMessageWithVectorClock(message,vc) =>
+      //increment vectorClock
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
         //here we don't send
