@@ -20,8 +20,9 @@ object SecureActor {
   case class NormalMessageWithVectorClock(message: Any, vc: Array[Int])
   case class NormalMessage(message: Any)
   case class ErrorMessage(vc: Array[Int]) extends MyControlMessage
-  case class AskControlMessage(message: MyTransition, asker: ActorRef, dest: ActorRef, vc: Array[Int], inspectedTransition: MyTransition, isBlocked: Boolean, repRecs: Vector[(MyTransition, Array[Int], String)]) extends MyControlMessage
-  case class TellControlMessage(message: Any, flag: Boolean, teller: ActorRef, dest: ActorRef, vc: Array[Int], repRecs: Vector[(MyTransition, Array[Int], String)]) extends MyControlMessage
+  case class AskControlMessage(message: MyTransition, asker: ActorRef, dest: ActorRef, vc: Array[Int], inspectedTransition: MyTransition, isBlocked: Boolean) extends MyControlMessage
+  //inquired transition
+  case class TellControlMessage(message: Any, flag: Boolean, teller: ActorRef, dest: ActorRef, vc: Array[Int], inspectedTransition: MyTransition, repRecs: Vector[(MyTransition, Array[Int], String)]) extends MyControlMessage
   case class NotifyControlMessage(asker: ActorRef, vc: Array[Int]) extends MyControlMessage
   case class StashedNormalMessage(message: NormalMessageWithVectorClock) extends StashedMessage
   case class StashedAskMessage(message: AskControlMessage) extends StashedMessage
@@ -44,7 +45,8 @@ class SecureActor extends Actor{
   var stashNormalQueue: Vector[NormalMessageWithVectorClock] = Vector[NormalMessageWithVectorClock]()
   var stashAskQueue: Vector[AskControlMessage] = Vector[AskControlMessage]()
   var pendingAsk: Map[(MyTransition, Array[Int]), Vector[ActorRef]] = Map()
-  var pendingMonitorMessage: Vector[MyControlMessage] = vectorClock[MyControlMessage]()
+  // Make it list of control messages
+  var pendingMonitorMessage: Vector[(MyControlMessage, MyTransition)] = Vector[(MyControlMessage, MyTransition)]()
   implicit val ec: ExecutionContext = context.dispatcher
   // what about our own clock value if it's bigger in other actor's vc?
   def updateVectorClock(vc: Array[Int]): Unit={
@@ -98,10 +100,9 @@ class SecureActor extends Actor{
       val pendingIndex = (transition, vectorClock)
       var pendingList : Vector[ActorRef] = Vector[ActorRef]()
       val pres: Vector[MyTransition] = automata.singleFindPre(transition)
-      val res:  Vector[(MyTransition, Array[Int], String)] = Vector()
       for (pre ← pres) {
         val msg: MessageBundle = pre.messageBundle
-        val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, transition, false, res)
+        val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock, transition, false)
         msg.s ! ctrlMsg
         pendingList = pendingList :+ msg.s
       }
@@ -112,14 +113,13 @@ class SecureActor extends Actor{
       for (transition ← transitions) {
         val pres: Vector[MyTransition] = automata.singleFindPre(transition)
         var tellList: Vector[Future[TellControlMessage]] = Vector.empty[Future[TellControlMessage]]
-        val res:  Vector[(MyTransition, Array[Int], String)] = Vector()
         for (pre ← pres) {
           val msg: MessageBundle = pre.messageBundle
           //why construct my transition from scratch? pre is not good enough?
           var isBlocked: Boolean = false
 //          if (automata.isLastTransition(pre))
 //            isBlocked = true
-          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock,transition, true, res)
+          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock,transition, true)
           implicit val timeout = Timeout(10.seconds)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
           tellList = tellList :+ future
@@ -227,19 +227,22 @@ class SecureActor extends Actor{
       }
     }
 
-    case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked, res) =>
+    case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked) =>
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
-        val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
-        sender() ! tellControlMessage
+        //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
+        val (tellControlMessage,isPending) = tellStatusToSender(AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked))
+        if(!isPending)
+          sender() ! tellControlMessage
       }
       else {
-        val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked, res)
+        val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked)
         stashAskQueue = stashAskQueue :+ askmsg
       }
 
-    case TellControlMessage(message, flag, teller, dest, vc, repRecs) =>
+    case TellControlMessage(message, flag, teller, dest, vc, transition, repRecs) =>
+      println("I CAUGHT A TELL CONTROL MESSAGE")
       for((pending, actorList) <- pendingAsk){
         if(pending._1 == message && pending._2(hash) == vc(hash)){
           actorList filterNot teller.==
@@ -262,24 +265,62 @@ class SecureActor extends Actor{
 
   //user should write it
   def receive = manageControls//.orElse(manageNormals)
-  def tellStatusToSender(from: Int, to: Int, messageBundle: MessageBundle, regTransiton: Boolean, asker: ActorRef): TellControlMessage ={
+
+  def tellStatusToSender(message: AskControlMessage): (TellControlMessage, Boolean) ={
+          var res:  Vector[(MyTransition, Array[Int], String)] = Vector()
+          var isPending: Boolean = false
           var answer = true
-          val transition: MyTransition = MyTransition(from, to, messageBundle, regTransiton)
           answer = false
           for(triple <- history){
-            if(triple._1 == transition){
-              answer = true
+            if(triple._1 == message.message){
+              if(triple._3 == "?") {
+                if (vectorClockLess(triple._2, message.vc)) {
+                  pendingMonitorMessage = pendingMonitorMessage :+ (message, triple._1)
+                  isPending = true
+                }
+              }
             }
           }
-          val tellControlMessage: TellControlMessage = TellControlMessage(transition, answer, vectorClock)
+
+          if(isPending == false){
+            for(triple <- history){
+              if(triple._1 == message.message){
+                if(triple._3 == "?"){
+                  if(vectorClockConcurent(triple._2, message.vc))
+                    res = res :+ (message.message, triple._2, "frmP")
+                }
+                else if(vectorClockNotGreater(triple._2, message.vc))
+                  res = res :+ (message.message, triple._2, triple._3)
+              }
+            }
+          }
+          if (!isPending) {
+            if (message.isBlocked)
+              unNotified = unNotified :+ message.asker
+          }
           //TODO check history and automata, send a tell message to sender with msg and true/false, sender will erase that msg from his "Pres set"
-          //assumed that tell does just like !
-          println(tellControlMessage)
-          // could be asker ! tellControlMessage
-          unNotified = unNotified :+ asker
-          tellControlMessage
+          (TellControlMessage(message.message, true, self, message.asker, vectorClock, message.inspectedTransition, res), isPending)
   }
 }
+
+  //  def tellStatusToSender(from: Int, to: Int, messageBundle: MessageBundle, regTransiton: Boolean, asker: ActorRef): TellControlMessage ={
+//          var answer = true
+//          val transition: MyTransition = MyTransition(from, to, messageBundle, regTransiton)
+//          answer = false
+//          for(triple <- history){
+//            if(triple._1 == transition){
+//              answer = true
+//            }
+//          }
+//          val tellControlMessage: TellControlMessage = TellControlMessage(transition, answer, vectorClock)
+//          //TODO check history and automata, send a tell message to sender with msg and true/false, sender will erase that msg from his "Pres set"
+//          //assumed that tell does just like !
+//          println(tellControlMessage)
+//          // could be asker ! tellControlMessage
+//          unNotified = unNotified :+ asker
+//          tellControlMessage
+//  }
+//}
 
 
 object MainApp extends App {
