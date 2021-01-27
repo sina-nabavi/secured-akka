@@ -6,6 +6,8 @@ package com
 
 import akka.actor.ActorRef
 
+import scala.collection.mutable
+
 //import java.util.Queue
 //import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -41,6 +43,70 @@ class Automata {
     returnVar
   }
 
+  def getAllVioTransitions(): Vector[MyTransition] =
+  {
+    var returnVar: Vector[MyTransition] = Vector.empty[MyTransition]
+    for(transition <- transitions) {
+      if(transition.regTransition == false)
+        returnVar = returnVar :+ transition
+    }
+    returnVar
+  }
+
+  def isInPath(inspected: MyTransition, vio: MyTransition): Boolean = {
+      var pendingPreTrans: mutable.Set[MyTransition] = mutable.Set.empty[MyTransition]
+      var pendingPostTrans: mutable.Set[MyTransition] = mutable.Set.empty[MyTransition]
+      var preTrans: mutable.Set[MyTransition] = mutable.Set.empty[MyTransition]
+      var postTrans: mutable.Set[MyTransition] = mutable.Set.empty[MyTransition]
+      var pres: mutable.Set[Int] = mutable.Set.empty[Int]
+      var posts: mutable.Set[Int] = mutable.Set.empty[Int]
+
+      pendingPreTrans ++= singleFindPre(inspected)
+      val lastPreTrans : MyTransition = pendingPreTrans.last
+      while(!pendingPreTrans.isEmpty){
+        if(preTrans.contains(lastPreTrans)){
+          pendingPreTrans -= lastPreTrans
+        }
+        else{
+          preTrans += lastPreTrans
+          pendingPreTrans -=lastPreTrans
+          pendingPreTrans ++= singleFindPre(lastPreTrans)
+          pres+= lastPreTrans._from
+          pres+=lastPreTrans._to
+        }
+      }
+
+    pendingPostTrans ++= singleFindPost(inspected)
+    val lastPostTrans : MyTransition = pendingPostTrans.last
+    while(!pendingPostTrans.isEmpty){
+      if(postTrans.contains(lastPostTrans)){
+        pendingPostTrans -= lastPostTrans
+      }
+      else{
+        postTrans += lastPostTrans
+        pendingPostTrans -=lastPostTrans
+        pendingPostTrans ++= singleFindPost(lastPostTrans)
+        posts+= lastPostTrans._from
+        posts+=lastPostTrans._to
+      }
+    }
+
+    if(posts.contains(vio._from) && pres.contains(vio._to))
+      true
+    else
+      false
+  }
+
+  def singleFindVio(inputTransition: MyTransition): Vector[MyTransition] = {
+    var returnVar: Vector[MyTransition] = Vector.empty[MyTransition]
+    val vioTransitions = getAllVioTransitions()
+    for(vio <- vioTransitions){
+      if(isInPath(inputTransition, vio))
+        returnVar = returnVar :+ vio
+    }
+    returnVar
+  }
+
   def singleFindPre(inputTransition: MyTransition): Vector[MyTransition] =
   {
     var returnVar: Vector[MyTransition] = Vector.empty[MyTransition]
@@ -50,6 +116,17 @@ class Automata {
     }
     returnVar
   }
+
+  def singleFindPost(inputTransition: MyTransition): Vector[MyTransition] =
+  {
+    var returnVar: Vector[MyTransition] = Vector.empty[MyTransition]
+    for (transition ← transitions) {
+      if (transition.from == inputTransition.to)
+        returnVar = returnVar :+ transition
+    }
+    returnVar
+  }
+
   def findTransitionByMessageBundle(messageBundle: MessageBundle): Vector[MyTransition] = //returns vector[Transition] of messageBundles, null in case of not found
   {
     var returnVar: Vector[MyTransition] = Vector.empty[MyTransition]
