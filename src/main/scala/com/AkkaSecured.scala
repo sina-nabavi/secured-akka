@@ -179,6 +179,34 @@ class SecureActor extends Actor{
         history = history :+ (transition, vectorClock, "?")
     }
   }
+  //what happens about true, sending the error, or false?
+  def relaxedTellCheck(tellMessage: TellControlMessage): Unit = {
+    var historyUpdate: Boolean = false
+    for(triple <- tellMessage.repRecs){
+      //add the vio condition
+      if(vectorClockLess(triple._2, tellMessage.vc)){
+        for(historyTriple <- history){
+          //if(historyTriple._1 == triple._1)
+        }
+        historyUpdate = true
+      }
+    }
+    if(!historyUpdate){
+      for(triple <- tellMessage.repRecs){
+        //add the vio condition
+        if(vectorClockNotGreater(tellMessage.vc, triple._2) && (vectorClockConcurent(tellMessage.vc, triple._2))){
+          for(historyTriple <- history){
+            //if(historyTriple._1 == triple._1)
+          }
+          historyUpdate = true
+        }
+      }
+    }
+
+    //remove transition from history
+    //if(!historyUpdate)
+
+  }
 
   def sendBlocking(receiver: ActorRef, message: NormalMessage, automata: Automata,transitions: Vector[MyTransition] ): Unit = {
     //not used
@@ -241,6 +269,7 @@ class SecureActor extends Actor{
         stashAskQueue = stashAskQueue :+ askmsg
       }
 
+    //stashing
     case TellControlMessage(message, flag, teller, dest, vc, transition, repRecs) =>
       println("I CAUGHT A TELL CONTROL MESSAGE")
       for((pending, actorList) <- pendingAsk){
