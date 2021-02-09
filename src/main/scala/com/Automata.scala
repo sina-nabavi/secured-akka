@@ -53,14 +53,17 @@ class Automata {
     returnVar
   }
 
-  def isInPath(inspected: MyTransition, vio: MyTransition): Boolean = {
+  def isInPath(inspected: MyTransition, vioTransitions: Vector[MyTransition]): Vector[MyTransition] = {
+    // own vertices transition
+    // in this func check for all the vio transitions
       var pendingPreTrans: mutable.Set[MyTransition] = mutable.Set.empty[MyTransition]
       var pendingPostTrans: mutable.Set[MyTransition] = mutable.Set.empty[MyTransition]
       var preTrans: mutable.Set[MyTransition] = mutable.Set.empty[MyTransition]
       var postTrans: mutable.Set[MyTransition] = mutable.Set.empty[MyTransition]
       var pres: mutable.Set[Int] = mutable.Set.empty[Int]
       var posts: mutable.Set[Int] = mutable.Set.empty[Int]
-
+      pres += inspected.from
+      posts += inspected.to
       pendingPreTrans ++= singleFindPre(inspected)
       val lastPreTrans : MyTransition = pendingPreTrans.last
       while(!pendingPreTrans.isEmpty){
@@ -71,8 +74,8 @@ class Automata {
           preTrans += lastPreTrans
           pendingPreTrans -=lastPreTrans
           pendingPreTrans ++= singleFindPre(lastPreTrans)
-          pres+= lastPreTrans._from
-          pres+=lastPreTrans._to
+          pres+= lastPreTrans.from
+          pres+=lastPreTrans.to
         }
       }
 
@@ -86,25 +89,21 @@ class Automata {
         postTrans += lastPostTrans
         pendingPostTrans -=lastPostTrans
         pendingPostTrans ++= singleFindPost(lastPostTrans)
-        posts+= lastPostTrans._from
-        posts+=lastPostTrans._to
+        posts+= lastPostTrans.from
+        posts+=lastPostTrans.to
       }
     }
-
-    if(posts.contains(vio._from) && pres.contains(vio._to))
-      true
-    else
-      false
-  }
-
-  def singleFindVio(inputTransition: MyTransition): Vector[MyTransition] = {
     var returnVar: Vector[MyTransition] = Vector.empty[MyTransition]
-    val vioTransitions = getAllVioTransitions()
-    for(vio <- vioTransitions){
-      if(isInPath(inputTransition, vio))
+    for(vio <- vioTransitions) {
+      if (posts.contains(vio.from) && pres.contains(vio.to))
         returnVar = returnVar :+ vio
     }
     returnVar
+  }
+
+  def singleFindVio(inputTransition: MyTransition): Vector[MyTransition] = {
+    val vioTransitions = getAllVioTransitions()
+    return isInPath(vioTransitions)
   }
 
   def singleFindPre(inputTransition: MyTransition): Vector[MyTransition] =
