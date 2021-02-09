@@ -1,5 +1,7 @@
 package com
 
+import java.util.concurrent.TimeoutException
+
 import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 
 import scala.concurrent.Await
@@ -44,7 +46,7 @@ class SecureActor extends Actor{
   var history: Vector[(MyTransition, Array[Int], String)] = Vector[(MyTransition, Array[Int], String)]()
   var stashNormalQueue: Vector[NormalMessageWithVectorClock] = Vector[NormalMessageWithVectorClock]()
   var stashAskQueue: Vector[AskControlMessage] = Vector[AskControlMessage]()
-  var pendingAsk: Map[(MyTransition, Array[Int]), Vector[ActorRef]] = Map()
+  var pendingAsk: Map[(MyTransition, Array[Int]), Vector[ActorRef]] = Map() // immutable
   // Make it list of control messages
   var pendingMonitorMessage: Vector[(MyControlMessage, MyTransition)] = Vector[(MyControlMessage, MyTransition)]()
   implicit val ec: ExecutionContext = context.dispatcher
@@ -120,18 +122,30 @@ class SecureActor extends Actor{
 //          if (automata.isLastTransition(pre))
 //            isBlocked = true
           val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock,transition, true)
-          implicit val timeout = Timeout(10.seconds)
+          implicit val timeout = Timeout(OverallTimeOut)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
           tellList = tellList :+ future
         }
         var preSent: Int = 0
-        val all = Future.sequence(tellList)
-        Await.result(all, SecureActor.OverallTimeOut)
-        for(tellRes <- all.value.get.get){
-          if(tellRes.flag == true){
-            preSent = preSent + 1
+        var done: Boolean = false
+        var timeOutMultiplier: Int = 1
+        while(!done) {
+          try {
+            val all = Future.sequence(tellList)
+            Await.result(all, SecureActor.OverallTimeOut * timeOutMultiplier)
+            for (tellRes <- all.value.get.get) {
+              if (tellRes.flag == true) {
+                preSent = preSent + 1
+              }
+              updateVectorClock(tellRes.vc)
+            }
+            done = true
+          } catch {
+            case e: TimeoutException => {
+              timeOutMultiplier *= 2
+              manageAsks()
+            }
           }
-          updateVectorClock(tellRes.vc)
         }
         // in the original problem we should check whether all the messages are sent or not
         if(preSent >= 1){
@@ -182,6 +196,7 @@ class SecureActor extends Actor{
   //what happens about true, sending the error, or false?
   def relaxedTellCheck(tellMessage: TellControlMessage): Unit = {
     var historyUpdate: Boolean = false
+
     for(triple <- tellMessage.repRecs){
       //add the vio condition
       if(vectorClockLess(triple._2, tellMessage.vc)){
@@ -226,6 +241,23 @@ class SecureActor extends Actor{
     }
     sendNotifications(transitions, automata)
   }
+
+  def manageAsks(): Receive = {
+    case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked) =>
+      updateVectorClock(vc)
+      if(unNotified.isEmpty) {
+        println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
+        //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
+        val (tellControlMessage,isPending) = tellStatusToSender(AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked))
+        if(!isPending)
+          sender() ! tellControlMessage
+      }
+      else {
+        val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked)
+        stashAskQueue = stashAskQueue :+ askmsg
+      }
+  }
+
   val manageControls : Receive = {
     case SendOrderMessage(to, message, automata) => {
       sendSecureMessage(to, message, automata)
@@ -269,12 +301,13 @@ class SecureActor extends Actor{
         stashAskQueue = stashAskQueue :+ askmsg
       }
 
-    //stashing
+    //stashing ?
     case TellControlMessage(message, flag, teller, dest, vc, transition, repRecs) =>
       println("I CAUGHT A TELL CONTROL MESSAGE")
       for((pending, actorList) <- pendingAsk){
         if(pending._1 == message && pending._2(hash) == vc(hash)){
-          actorList filterNot teller.==
+          val newActorList : Vector[ActorRef] = actorList filterNot teller.==
+          pendingAsk += (pending ->  newActorList)
           //if actorList.length == 0 ?
         }
       }
@@ -283,6 +316,7 @@ class SecureActor extends Actor{
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
         //here we don't send
+        vectorClock(hash) += 1
         self ! message
       } else
         stashNormalQueue = stashNormalQueue :+ NormalMessageWithVectorClock(message,vc)
