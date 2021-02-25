@@ -65,8 +65,9 @@ class Automata {
       pres += inspected.from
       posts += inspected.to
       pendingPreTrans ++= singleFindPre(inspected)
-      val lastPreTrans : MyTransition = pendingPreTrans.last
+      var lastPreTrans : MyTransition = null
       while(!pendingPreTrans.isEmpty){
+        lastPreTrans = pendingPreTrans.last
         if(preTrans.contains(lastPreTrans)){
           pendingPreTrans -= lastPreTrans
         }
@@ -75,13 +76,13 @@ class Automata {
           pendingPreTrans -=lastPreTrans
           pendingPreTrans ++= singleFindPre(lastPreTrans)
           pres+= lastPreTrans.from
-          pres+=lastPreTrans.to
+          pres+= lastPreTrans.to
         }
       }
-
     pendingPostTrans ++= singleFindPost(inspected)
-    val lastPostTrans : MyTransition = pendingPostTrans.last
+    var lastPostTrans: MyTransition = null
     while(!pendingPostTrans.isEmpty){
+      lastPostTrans = pendingPostTrans.last
       if(postTrans.contains(lastPostTrans)){
         pendingPostTrans -= lastPostTrans
       }

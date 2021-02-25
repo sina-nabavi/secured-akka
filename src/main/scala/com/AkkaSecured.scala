@@ -176,7 +176,7 @@ class SecureActor extends Actor{
 
   def sendSecureMessage(receiver: ActorRef, message: NormalMessage): Unit = {
     // assume that we have the automata in the Actor
-    val msgBundle: MessageBundle = new MessageBundle(self, message, receiver)
+    val msgBundle: MessageBundle = new MessageBundle(self, message.message, receiver)
     //for all transitions
     val transitions = automata.findTransitionByMessageBundle(msgBundle)
     var isLast: Boolean = false
@@ -195,7 +195,7 @@ class SecureActor extends Actor{
     vectorClock(hash) += 1
     println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + message)
     //not used
-    val transitionStatus: Vector[Int] = Vector.empty[Int]
+    val transitionStatus: Vector[Int] = Vector[Int]()
     receiver ! NormalMessageWithVectorClock(message.message,vectorClock)
     asynchronizedMonitoring(transitions, transitionStatus, automata)
     //addToHistory(transitions)
