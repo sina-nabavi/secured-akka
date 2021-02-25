@@ -103,7 +103,7 @@ class Automata {
 
   def singleFindVio(inputTransition: MyTransition): Vector[MyTransition] = {
     val vioTransitions = getAllVioTransitions()
-    return isInPath(vioTransitions)
+    isInPath(inputTransition ,vioTransitions)
   }
 
   def singleFindPre(inputTransition: MyTransition): Vector[MyTransition] =
