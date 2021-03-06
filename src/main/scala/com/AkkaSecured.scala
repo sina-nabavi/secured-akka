@@ -7,17 +7,31 @@ import akka.actor.{Actor, ActorRef, ActorSystem, Props}
 import scala.concurrent.Await
 import akka.util.Timeout
 import akka.pattern.ask
+import akka.actor.Stash
+import com.MainApp.{firstActor, secondActor}
 
+import scala.collection.immutable.Range.Partial
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 
 //we can only transmit vector clock on Normal Message to reduce the cost
+object AutomataObject{
+  val customAutomata: Automata = new Automata
+  val customBundle: MessageBundle = new MessageBundle(secondActor, "a0", firstActor)
+  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
+  val customBundle2: MessageBundle = new MessageBundle(firstActor, "b1",secondActor)
+  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
+  customAutomata.addTransition(customTransition)
+  customAutomata.addTransition(customTransition2)
+  customAutomata.addLastTransition(2)
+}
 
 object SecureActor {
   def props(): Props = Props(new SecureActor())
   val OverallTimeOut = 10 seconds
   val MaximumTimeout = 500 seconds
   val MaxActorNumber: Int = 100
+  val automata: Automata = AutomataObject.customAutomata
   //add error type
   //Ask if we should send by value: I guessed that actors wont change it so its okay
   case class NormalMessageWithVectorClock(message: Any, vc: Array[Int])
@@ -30,14 +44,14 @@ object SecureActor {
   case class StashedNormalMessage(message: NormalMessageWithVectorClock) extends StashedMessage
   case class StashedAskMessage(message: AskControlMessage) extends StashedMessage
   //Did not include here to make it transparent
-  case class SendOrderMessage(to: ActorRef, message: Any)
-  case class SetAutomata(automata:Automata)
+  case class SendOrderMessage(to: ActorRef, message: Any, first: ActorRef, isThird: Boolean)
+  //case class SetAutomata(automata:Automata)
 }
 
 
 class SecureActor extends Actor{
   import SecureActor._
-  var automata: Automata = null
+  //var automata: Automata = null
   val name: String = self.path.name
   val hash: Int = (name.hashCode() % MaxActorNumber).abs
   //there is a 1/100 chance for two strings to have a same hash
@@ -141,6 +155,7 @@ class SecureActor extends Actor{
         var done: Boolean = false
         var timeOutMultiplier: Int = 1
         val all = Future.sequence(tellList)
+        context.become(manageAsks)
         while(!done) {
           try {
             for(tellRes <- tellList){
@@ -166,6 +181,7 @@ class SecureActor extends Actor{
             }
             val result = relaxedTellCheck(transition, vectorClock, true)
             done = true
+            context.unbecome()
             if(result == true)
               return true
             else if(result == false)
@@ -175,9 +191,8 @@ class SecureActor extends Actor{
             }
           } catch {
             case e: TimeoutException => {
-              println("IM HERE")
+              println(" I have a timeout EXCEPTION")
               timeOutMultiplier *= 2
-              manageAsks()
             }
           }
         }
@@ -386,11 +401,10 @@ class SecureActor extends Actor{
   }
 
 
-  def manageAsks(): Receive = {
+  def manageAsks: Receive = {
     case _ => println("Executing manage asks while tell message is arriving")
-    case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked) =>
-      updateVectorClock(vc)
-      println("OK HI")
+//    case AskControlMessage =>
+//      println("OK HI")
 //      if(unNotified.isEmpty) {
 //        println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
 //        //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
@@ -405,11 +419,16 @@ class SecureActor extends Actor{
   }
 
   val manageControls : Receive = {
-    case SetAutomata(aut) => {
-      automata = aut
-    }
-    case SendOrderMessage(to, message) => {
-      sendSecureMessage(to, NormalMessage(message))
+//    case SetAutomata(aut) => {
+//      automata = aut
+//    }
+    case SendOrderMessage(to, message, first: ActorRef, isThird) => {
+//      if(isThird) {
+//        Thread.sleep(11000)
+//        println("Sending ASK Message from third actor to be processed by manageAsks")
+//        first ! AskControlMessage(null, null, null, null, null, false)
+//      } else
+        sendSecureMessage(to, NormalMessage(message))
     }
     case ErrorMessage(vc) => {
       updateVectorClock(vc)
@@ -437,10 +456,10 @@ class SecureActor extends Actor{
     }
 
     case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked) =>
-      if(inspectedTrans.messageBundle.m == "b1"){
-        println("my message is b1 and I am going to sleep zzzz " + self.path)
-        Thread.sleep(11000)
-      }
+//      if(inspectedTrans.messageBundle.m == "b1"){
+//        println("my message is b1 and I am going to sleep zzzz " + self.path)
+//        Thread.sleep(11000)
+//      }
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
@@ -580,18 +599,23 @@ object MainApp extends App {
     system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
   val secondActor: ActorRef =
     system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
-  val customAutomata: Automata = new Automata
-  val customBundle: MessageBundle = new MessageBundle(secondActor, "a0", firstActor)
-  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
-  val customBundle2: MessageBundle = new MessageBundle(firstActor, "b1",secondActor)
-  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
-  customAutomata.addTransition(customTransition)
-  customAutomata.addTransition(customTransition2)
-  customAutomata.addLastTransition(2)
-  secondActor ! SetAutomata(customAutomata)
-  firstActor ! SetAutomata(customAutomata)
-  secondActor ! SendOrderMessage(firstActor, "a0")
-  secondActor ! SendOrderMessage(secondActor, "c2")
-  firstActor ! SendOrderMessage(secondActor, "b1")
-  secondActor ! SendOrderMessage(secondActor, "c1")
+ // val thirdActor: ActorRef =
+    //system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"thirdActor")
+//  val customAutomata: Automata = new Automata
+//  val customBundle: MessageBundle = new MessageBundle(secondActor, "a0", firstActor)
+//  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
+//  val customBundle2: MessageBundle = new MessageBundle(firstActor, "b1",secondActor)
+//  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
+//  customAutomata.addTransition(customTransition)
+//  customAutomata.addTransition(customTransition2)
+//  customAutomata.addLastTransition(2)
+  //secondActor ! SetAutomata(customAutomata)
+  //firstActor ! SetAutomata(customAutomata)
+ // thirdActor ! SetAutomata(customAutomata)
+  secondActor ! SendOrderMessage(firstActor, "a0", firstActor, false)
+  secondActor ! SendOrderMessage(secondActor, "c2", firstActor, false)
+  firstActor ! SendOrderMessage(secondActor, "b1", firstActor, false)
+  //thirdActor ! SendOrderMessage(firstActor, "b1", firstActor, true)
+  secondActor ! SendOrderMessage(secondActor, "c1", firstActor, false)
+
 }
