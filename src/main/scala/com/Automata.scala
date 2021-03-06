@@ -27,6 +27,7 @@ class Automata {
     transitions = transitions :+ newTransition
   }
 
+  //why int?
   def addLastTransition(lastTran: Int): Unit =
   {
     lastTransitions = lastTransitions :+ lastTran

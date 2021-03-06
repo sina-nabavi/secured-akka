@@ -16,6 +16,7 @@ import scala.concurrent.duration._
 object SecureActor {
   def props(): Props = Props(new SecureActor())
   val OverallTimeOut = 10 seconds
+  val MaximumTimeout = 500 seconds
   val MaxActorNumber: Int = 100
   //add error type
   //Ask if we should send by value: I guessed that actors wont change it so its okay
@@ -130,24 +131,41 @@ class SecureActor extends Actor{
 //          if (automata.isLastTransition(pre))
 //            isBlocked = true
           val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, msg.s, vectorClock,transition, true)
-          implicit val timeout = Timeout(OverallTimeOut)
+          implicit val timeout = Timeout(MaximumTimeout)
           val future: Future[TellControlMessage] = (msg.s ? ctrlMsg).mapTo[TellControlMessage]
+
           tellList = tellList :+ future
         }
         receivedResponse += ((transition, vectorClock) -> Vector[(MyTransition, Array[Int], String)]())
         addToHistory(transitions)
         var done: Boolean = false
         var timeOutMultiplier: Int = 1
+        val all = Future.sequence(tellList)
         while(!done) {
           try {
-            val all = Future.sequence(tellList)
+            for(tellRes <- tellList){
+              print("individual status " + tellRes.isCompleted)
+              if(tellRes.isCompleted){
+                print(" failure " + tellRes.value.get )
+              }
+              print(" sum status " + all.isCompleted)
+              println("")
+            }
+            if(all.isCompleted){
+              println("im here again " + timeOutMultiplier)
+              //print(all.value.get + " it is ")
+            }
             Await.result(all, SecureActor.OverallTimeOut * timeOutMultiplier)
+            // Await.result(all, SecureActor.OverallTimeOut * timeOutMultiplier)
+            // Await.result(all, Duration.Inf)
+            println("va complete shod " + timeOutMultiplier)
             for (tellRes <- all.value.get.get) {
               val newRcvResp:  Vector[(MyTransition, Array[Int], String)] = receivedResponse(tellRes.inspectedTransition, vectorClock) ++ tellRes.repRecs
               receivedResponse += ((tellRes.inspectedTransition, vectorClock) -> newRcvResp)
               updateVectorClock(tellRes.vc)
             }
             val result = relaxedTellCheck(transition, vectorClock, true)
+            done = true
             if(result == true)
               return true
             else if(result == false)
@@ -155,9 +173,9 @@ class SecureActor extends Actor{
             else{
               throw new Exception("unexpected result from relaxed tell check")
             }
-            done = true
           } catch {
             case e: TimeoutException => {
+              println("IM HERE")
               timeOutMultiplier *= 2
               manageAsks()
             }
@@ -192,6 +210,7 @@ class SecureActor extends Actor{
   }
 
   def sendNonBlocking(receiver: ActorRef, message: SecureActor.NormalMessage, transitions: Vector[MyTransition]): Unit = {
+    println(" I am using NON BLOCKING send" + " for message: " + message)
     vectorClock(hash) += 1
     println(self.path.name + " my vector clock value is:" + vectorClock(hash) + " for message: " + message)
     //not used
@@ -202,6 +221,7 @@ class SecureActor extends Actor{
   }
 
   def sendBlocking(receiver: ActorRef, message: NormalMessage,transitions: Vector[MyTransition] ): Unit = {
+    println(" I am using BLOCKING send" + " for message: " + message)
     //not used
     val transitionStatus: Vector[Int] = Vector.empty[Int]
     //    if(synchronizedMonitoring(transitions, transitionStatus, automata)){
@@ -324,6 +344,8 @@ class SecureActor extends Actor{
     handlePending(inspected)
     if(historyUpdate & isBlocking)
       true
+    else if(isBlocking)
+      false
   }
 
   def handlePending(transition: MyTransition): Unit = {
@@ -346,6 +368,7 @@ class SecureActor extends Actor{
     //}
     val foundTransHistory: Vector[(MyTransition, Array[Int], String)] = history.filter(_._1 == transition)
     val foundTransPending: Vector[AskControlMessage] = pendingMonitorMessage.filter(_.inspectedTransition == transition)
+    //possible multiple pending for a target transition
     for(mm <- foundTransPending) {
       for (triple <- foundTransHistory) {
         var res: Vector[(MyTransition, Array[Int], String)] = Vector()
@@ -364,19 +387,21 @@ class SecureActor extends Actor{
 
 
   def manageAsks(): Receive = {
+    case _ => println("Executing manage asks while tell message is arriving")
     case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked) =>
       updateVectorClock(vc)
-      if(unNotified.isEmpty) {
-        println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
-        //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
-        val (tellControlMessage,isPending) = tellStatusToSender(AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked))
-        if(!isPending)
-          sender() ! tellControlMessage
-      }
-      else {
-        val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked)
-        stashAskQueue = stashAskQueue :+ askmsg
-      }
+      println("OK HI")
+//      if(unNotified.isEmpty) {
+//        println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
+//        //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
+//        val (tellControlMessage,isPending) = tellStatusToSender(AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked))
+//        if(!isPending)
+//          sender() ! tellControlMessage
+//      }
+//      else {
+//        val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked)
+//        stashAskQueue = stashAskQueue :+ askmsg
+//      }
   }
 
   val manageControls : Receive = {
@@ -412,13 +437,19 @@ class SecureActor extends Actor{
     }
 
     case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked) =>
+      if(inspectedTrans.messageBundle.m == "b1"){
+        println("my message is b1 and I am going to sleep zzzz " + self.path)
+        Thread.sleep(11000)
+      }
       updateVectorClock(vc)
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
         //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
         val (tellControlMessage,isPending) = tellStatusToSender(AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked))
-        if(!isPending)
+        if(!isPending) {
           sender() ! tellControlMessage
+        }
+
       }
       else {
         val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked)
@@ -541,7 +572,7 @@ class SecureActor extends Actor{
 //  }
 //}
 
-
+//
 object MainApp extends App {
   import SecureActor._
   val system: ActorSystem = ActorSystem("helloAkka")
