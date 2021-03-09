@@ -617,5 +617,4 @@ object MainApp extends App {
   firstActor ! SendOrderMessage(secondActor, "b1", firstActor, false)
   //thirdActor ! SendOrderMessage(firstActor, "b1", firstActor, true)
   secondActor ! SendOrderMessage(secondActor, "c1", firstActor, false)
-
 }
