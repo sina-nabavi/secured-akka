@@ -12,6 +12,8 @@ lib_managed/
 src_managed/
 project/boot/
 dfa.json
+dfa 2.json
+
 project/plugins/project/
 
 # Scala-IDE specific
