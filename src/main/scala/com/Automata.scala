@@ -4,6 +4,8 @@
 
 package com
 
+
+
 import akka.actor.ActorRef
 
 import scala.collection.mutable
@@ -154,7 +156,7 @@ class Automata {
 
 }
 
-class MessageBundle(sender: ActorRef, message: Any, receiver: ActorRef) {
+class MessageBundle(sender: String, message: Any, receiver: String) {
   val s=sender
   val m=message
   val r=receiver
