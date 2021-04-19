@@ -2,13 +2,12 @@ package com
 
 import java.util.concurrent.{TimeUnit, TimeoutException}
 
-import akka.actor.{Actor, ActorRef, ActorSystem, Props}
+import akka.actor.{Actor, ActorRef, ActorSelection, ActorSystem, Props, Stash}
 
 import scala.concurrent.Await
 import akka.util.Timeout
 import akka.pattern.ask
-import akka.actor.Stash
-import com.MainApp.{firstActor, secondActor}
+//import com.MainApp.{firstActor, secondActor}
 
 import scala.language.dynamics._
 import dijon._
@@ -18,6 +17,10 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 import scala.util.{Failure, Success}
 
+//object ActorSystemObject{
+//  var system: ActorSystem = null
+//
+//}
 //we can only transmit vector clock on Normal Message to reduce the cost
 object AutomataObject{
   val inputFile = "./dfa.json"
@@ -66,7 +69,7 @@ object AutomataObject{
 }
 
 object SecureActor {
-  def props(): Props = Props(new SecureActor())
+  //def props(): Props = Props(new SecureActor())
   val OverallTimeOut = 10 seconds
   val MaximumTimeout = 500 seconds
   val MaxActorNumber: Int = 100
@@ -76,7 +79,7 @@ object SecureActor {
   case class NormalMessageWithVectorClock(message: Any, vc: Array[Int])
   case class NormalMessage(message: Any)
   case class ErrorMessage(vc: Array[Int]) extends MyControlMessage
-  case class AskControlMessage(message: MyTransition, asker: ActorRef, dest: ActorRef, msgVc: Array[Int], inspectedTransition: MyTransition, isBlocked: Boolean) extends MyControlMessage
+  case class AskControlMessage(message: MyTransition, asker: ActorRef, msgVc: Array[Int], inspectedTransition: MyTransition, isBlocked: Boolean) extends MyControlMessage
   //inquired transition
   case class TellControlMessage(message: MyTransition, teller: ActorRef, dest: ActorRef, vc: Array[Int], msgVC: Array[Int], inspectedTransition: MyTransition, repRecs: Vector[(MyTransition, Array[Int], String)]) extends MyControlMessage
   case class NotifyControlMessage(asker: ActorRef, vc: Array[Int]) extends MyControlMessage
@@ -88,7 +91,7 @@ object SecureActor {
 }
 
 
-class SecureActor extends Actor{
+abstract class SecureActor extends Actor{
   import SecureActor._
   //var automata: Automata = null
   val name: String = self.path.name
@@ -116,19 +119,61 @@ class SecureActor extends Actor{
         vectorClock(i) = vc(i)
     }
   }
-  @throws(classOf[Exception])
-  def findactorByName(name: String):ActorRef =
+
+  def findactorByName(name: String):ActorSelection =
   {
-    implicit val timeout = Timeout(MaximumTimeout)
-    val duration = 1 seconds
-    val actorRef = context.system.actorSelection("user/" + name).resolveOne()//.onComplete {
-      //case Success(actorRef) => actorRef
-      // Failure(ex) => throw new Exception("actor does not exist")//Logger.warn("user/" + "somename" + " does not exist")
-    //}
-    Await.result(actorRef, duration)
-    actorRef.value.get.get
+
+    context.actorSelection("/user/" + name)
+    //    val duration = 1 seconds
+    //    val actorRef = context.actorSelection("/user/" + name ).resolveOne()//.onComplete {
+    //      //case Success(actorRef) => actorRef
+    //      // Failure(ex) => throw new Exception("actor does not exist")//Logger.warn("user/" + "somename" + " does not exist")
+    //    //}
+    //    Await.result(actorRef, duration)
+    //    actorRef.value.get.get
 
   }
+//
+//  def findactorByName(name: String):ActorRef =
+//  {
+//      println(self.path + " is searching for " + name + " " + name.length())
+//      implicit val timeout = Timeout(MaximumTimeout)
+//      val duration = 1 seconds
+//      implicit val ex = ExecutionContext.global
+//      var done: Boolean = false
+//      var timeOutMultiplier: Int = 1
+//      var actorRef: ActorRef = null
+//      while(!done){
+//        try{
+//          val foundActor = context.actorSelection("/user/" + name).resolveOne()
+//          println("DARAM OBJECT NAGHES MIDAM BIRUN")
+//          Await.result(foundActor, duration * timeOutMultiplier)
+//          println(foundActor)
+//          if(foundActor.isCompleted){
+//            done = true
+//            actorRef = foundActor.value.get.get
+//          }
+//
+//        } catch{
+//          case e: TimeoutException => {
+//            println(" I have a timeout EXCEPTION")
+//            timeOutMultiplier *= 2
+//          }
+//        }
+//
+//      }
+//
+//      println(actorRef)
+//      actorRef
+////    val duration = 1 seconds
+////    val actorRef = context.actorSelection("/user/" + name ).resolveOne()//.onComplete {
+////      //case Success(actorRef) => actorRef
+////      // Failure(ex) => throw new Exception("actor does not exist")//Logger.warn("user/" + "somename" + " does not exist")
+////    //}
+////    Await.result(actorRef, duration)
+////    actorRef.value.get.get
+//
+//  }
   def vectorClockLess(vc1: Array[Int], vc2: Array[Int]): Boolean={
     for(i <- 0 to MaxActorNumber - 1){
       if(vc1(i) > vc2(i))
@@ -163,8 +208,9 @@ class SecureActor extends Actor{
     for (pre ← allPres) {
       val msg: MessageBundle = pre.messageBundle
       val notifMsg = NotifyControlMessage(self,vectorClock)
-      val preSender = findactorByName(msg.s)
-      preSender ! notifMsg
+//      val preSender = findactorByName(msg.s)
+      findactorByName(msg.s) ! notifMsg
+//      preSender ! notifMsg
     }
   }
   // transition status is still not used
@@ -177,7 +223,7 @@ class SecureActor extends Actor{
       for (pre ← presAndVios) {
         val msg: MessageBundle = pre.messageBundle
         val preSender = findactorByName(msg.s)
-        val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, preSender, vectorClock, transition, false)
+        val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, vectorClock, transition, false)
         preSender ! ctrlMsg
         pendingList = pendingList :+ (pre, vectorClock)
       }
@@ -198,7 +244,7 @@ class SecureActor extends Actor{
 //          if (automata.isLastTransition(pre))
 //            isBlocked = true
           val preSender = findactorByName(msg.s)
-          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, preSender, vectorClock,transition, true)
+          val ctrlMsg = AskControlMessage(MyTransition(pre.from, pre.to, msg, true), self, vectorClock,transition, true)
           implicit val timeout = Timeout(MaximumTimeout)
           val future: Future[TellControlMessage] = (preSender ? ctrlMsg).mapTo[TellControlMessage]
 
@@ -209,21 +255,21 @@ class SecureActor extends Actor{
         var done: Boolean = false
         var timeOutMultiplier: Int = 1
         val all = Future.sequence(tellList)
-        context.become(manageAsks)
+        //context.become(manageAsks)
         while(!done) {
           try {
-            for(tellRes <- tellList){
-              print("individual status " + tellRes.isCompleted)
-              if(tellRes.isCompleted){
-                print(" failure " + tellRes.value.get )
-              }
-              print(" sum status " + all.isCompleted)
-              println("")
-            }
-            if(all.isCompleted){
-              println("im here again " + timeOutMultiplier)
-              //print(all.value.get + " it is ")
-            }
+//            for(tellRes <- tellList){
+//              print("individual status " + tellRes.isCompleted)
+//              if(tellRes.isCompleted){
+//                print(" failure " + tellRes.value.get )
+//              }
+//              print(" sum status " + all.isCompleted)
+//              println("")
+//            }
+//            if(all.isCompleted){
+//              println("im here again " + timeOutMultiplier)
+//              //print(all.value.get + " it is ")
+//            }
             Await.result(all, SecureActor.OverallTimeOut * timeOutMultiplier)
             // Await.result(all, SecureActor.OverallTimeOut * timeOutMultiplier)
             // Await.result(all, Duration.Inf)
@@ -235,7 +281,7 @@ class SecureActor extends Actor{
             }
             val result = relaxedTellCheck(transition, vectorClock, true)
             done = true
-            context.unbecome()
+            //context.unbecome()
             if(result == true)
               return true
             else if(result == false)
@@ -509,7 +555,7 @@ class SecureActor extends Actor{
       }
     }
 
-    case AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked) =>
+    case AskControlMessage(message, asker, vc, inspectedTrans, isBlocked) =>
 //      if(inspectedTrans.messageBundle.m == "b1"){
 //        println("my message is b1 and I am going to sleep zzzz " + self.path)
 //        Thread.sleep(11000)
@@ -518,14 +564,14 @@ class SecureActor extends Actor{
       if(unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
         //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
-        val (tellControlMessage,isPending) = tellStatusToSender(AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked))
+        val (tellControlMessage,isPending) = tellStatusToSender(AskControlMessage(message, asker, vc, inspectedTrans, isBlocked))
         if(!isPending) {
           sender() ! tellControlMessage
         }
 
       }
       else {
-        val askmsg: AskControlMessage = AskControlMessage(message, asker, dest, vc, inspectedTrans, isBlocked)
+        val askmsg: AskControlMessage = AskControlMessage(message, asker, vc, inspectedTrans, isBlocked)
         stashAskQueue = stashAskQueue :+ askmsg
       }
 
@@ -533,6 +579,7 @@ class SecureActor extends Actor{
     case TellControlMessage(message, teller, dest, vc, msgVC, transition, repRecs) =>
       updateVectorClock(vc)
       println("I CAUGHT A TELL CONTROL MESSAGE")
+      // raises exception if doesn't have the trans
       val recvTrans = receivedResponse.filterKeys(_._1 == transition)
       val recvTransWithVC = recvTrans.filterKeys(_._2(hash) == msgVC(hash))
       for((inspected, rcvResp) <- recvTransWithVC){
@@ -565,7 +612,7 @@ class SecureActor extends Actor{
 //  }
 
   //user should write it
-  def receive = manageControls//.orElse(manageNormals)
+  //def receive = manageControls//.orElse(manageNormals)
 
   def tellStatusToSender(message: AskControlMessage): (TellControlMessage, Boolean) ={
     var res:  Vector[(MyTransition, Array[Int], String)] = Vector()
@@ -646,31 +693,31 @@ class SecureActor extends Actor{
 //}
 
 //
-object MainApp extends App {
-  import SecureActor._
-  val system: ActorSystem = ActorSystem("helloAkka")
-  val firstActor: ActorRef =
-    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
-  val secondActor: ActorRef =
-    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
- // val thirdActor: ActorRef =
-    //system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"thirdActor")
-//  val customAutomata: Automata = new Automata
-//  val customBundle: MessageBundle = new MessageBundle(secondActor, "a0", firstActor)
-//  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
-//  val customBundle2: MessageBundle = new MessageBundle(firstActor, "b1",secondActor)
-//  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
-//  customAutomata.addTransition(customTransition)
-//  customAutomata.addTransition(customTransition2)
-//  customAutomata.addLastTransition(2)
-  //secondActor ! SetAutomata(customAutomata)
-  //firstActor ! SetAutomata(customAutomata)
- // thirdActor ! SetAutomata(customAutomata)
-  println(firstActor.path.name)
-  secondActor ! SendOrderMessage(firstActor, "a0", firstActor, false)
-  secondActor ! SendOrderMessage(secondActor, "c2", firstActor, false)
-  firstActor ! SendOrderMessage(secondActor, "b1", firstActor, false)
-  //thirdActor ! SendOrderMessage(firstActor, "b1", firstActor, true)
-  secondActor ! SendOrderMessage(secondActor, "c1", firstActor, false)
-
-}
+//object MainApp extends App {
+//  import SecureActor._
+//  val system: ActorSystem = ActorSystem("helloAkka")
+//  val firstActor: ActorRef =
+//    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
+//  val secondActor: ActorRef =
+//    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
+// // val thirdActor: ActorRef =
+//    //system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"thirdActor")
+////  val customAutomata: Automata = new Automata
+////  val customBundle: MessageBundle = new MessageBundle(secondActor, "a0", firstActor)
+////  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
+////  val customBundle2: MessageBundle = new MessageBundle(firstActor, "b1",secondActor)
+////  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
+////  customAutomata.addTransition(customTransition)
+////  customAutomata.addTransition(customTransition2)
+////  customAutomata.addLastTransition(2)
+//  //secondActor ! SetAutomata(customAutomata)
+//  //firstActor ! SetAutomata(customAutomata)
+// // thirdActor ! SetAutomata(customAutomata)
+//  println(firstActor.path.name)
+//  secondActor ! SendOrderMessage(firstActor, "a0", firstActor, false)
+////  secondActor ! SendOrderMessage(secondActor, "c2", firstActor, false)
+//  firstActor ! SendOrderMessage(secondActor, "b1", firstActor, false)
+//  //thirdActor ! SendOrderMessage(firstActor, "b1", firstActor, true)
+////  secondActor ! SendOrderMessage(secondActor, "c1", firstActor, false)
+//
+//}
