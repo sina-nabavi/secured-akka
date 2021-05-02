@@ -31,8 +31,8 @@ object AutomataObject{
   for(state <- trimmedList){
     val string = state.replaceAll("^\"|\"$", "")
     val from = string.filterNot(c => c == 'q')
-    println(string)
-    println(jsonData.transitions(string))
+    //println(string)
+    //println(jsonData.transitions(string))
     var transList: List[String] = List.empty
     if(jsonData.transitions(string).toString() != "{}" && jsonData.transitions(string).toString() != "{ }"){
       transList = jsonData.transitions(string).toString().filterNot(c => c == '{' || c =='}').split(',').map(_.trim).toList
@@ -41,11 +41,12 @@ object AutomataObject{
       var Array(msgBndStr, to) = trans.split(':').map(_.trim)
       msgBndStr = msgBndStr.replaceAll("^\"|\"$", "")
       val Array(sender, msg, receiver) = msgBndStr.split('-').map(_.trim)
-      println(sender + " " + msg + " " + receiver)
+      //println(sender + " " + msg + " " + receiver)
       to = to.replaceAll("^\"|\"$", "").filterNot(c => c == 'q')
-      println(to)
+      //println(to)
       val bundle : MessageBundle = new MessageBundle(sender, msg, receiver)
       val transition: MyTransition = MyTransition(from.toInt, to.toInt, bundle, true)
+      println(bundle.s + ' ' + bundle.m + ' ' + bundle.r)
       automata.addTransition(transition)
     }
     val lastList: List[String] = jsonData.final_states.toString().filterNot(c => c == '[' || c ==']').split(',').map(_.trim).toList
@@ -69,7 +70,7 @@ object AutomataObject{
 }
 
 object SecureActor {
-  //def props(): Props = Props(new SecureActor())
+  def props(): Props = Props(new SecureActor())
   val OverallTimeOut = 10 seconds
   val MaximumTimeout = 500 seconds
   val MaxActorNumber: Int = 100
@@ -91,10 +92,11 @@ object SecureActor {
 }
 
 
-abstract class SecureActor extends Actor{
+class SecureActor extends Actor{
   import SecureActor._
+
   //var automata: Automata = null
-  val name: String = self.path.name
+  var name: String = self.path.name
   val hash: Int = (name.hashCode() % MaxActorNumber).abs
   //there is a 1/100 chance for two strings to have a same hash
   println("my name is " + name + " and my vector clock index is " + hash)
@@ -481,6 +483,7 @@ abstract class SecureActor extends Actor{
       //        pendingMonitorMessage = pendingMonitorMessage filterNot mm .==
       //      }
     //}
+    //Is this really gonna be a vector? (For my own knowledge) Is not it at most 1 triples?
     val foundTransHistory: Vector[(MyTransition, Array[Int], String)] = history.filter(_._1 == transition)
     val foundTransPending: Vector[AskControlMessage] = pendingMonitorMessage.filter(_.inspectedTransition == transition)
     //possible multiple pending for a target transition
@@ -518,24 +521,24 @@ abstract class SecureActor extends Actor{
 //      }
   }
 
-  val manageControls : Receive = {
-//    case SetAutomata(aut) => {
-//      automata = aut
-//    }
+  var manageControls: Receive = {
+    //    case SetAutomata(aut) => {
+    //      automata = aut
+    //    }
     case SendOrderMessage(to, message, first: ActorRef, isThird) => {
-//      if(isThird) {
-//        Thread.sleep(11000)
-//        println("Sending ASK Message from third actor to be processed by manageAsks")
-//        first ! AskControlMessage(null, null, null, null, null, false)
-//      } else
-        sendSecureMessage(to, NormalMessage(message))
+      //      if(isThird) {
+      //        Thread.sleep(11000)
+      //        println("Sending ASK Message from third actor to be processed by manageAsks")
+      //        first ! AskControlMessage(null, null, null, null, null, false)
+      //      } else
+      sendSecureMessage(to, NormalMessage(message))
     }
     case ErrorMessage(vc) => {
       updateVectorClock(vc)
       println("Error Message" + " " + self.path.name)
     }
 
-    case NotifyControlMessage(asker,vc) => {
+    case NotifyControlMessage(asker, vc) => {
       updateVectorClock(vc)
       println("Notify Message" + " " + self.path.name)
       unNotified = unNotified.filter(_ != asker)
@@ -556,16 +559,16 @@ abstract class SecureActor extends Actor{
     }
 
     case AskControlMessage(message, asker, vc, inspectedTrans, isBlocked) =>
-//      if(inspectedTrans.messageBundle.m == "b1"){
-//        println("my message is b1 and I am going to sleep zzzz " + self.path)
-//        Thread.sleep(11000)
-//      }
+      //      if(inspectedTrans.messageBundle.m == "b1"){
+      //        println("my message is b1 and I am going to sleep zzzz " + self.path)
+      //        Thread.sleep(11000)
+      //      }
       updateVectorClock(vc)
-      if(unNotified.isEmpty) {
+      if (unNotified.isEmpty) {
         println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
         //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
-        val (tellControlMessage,isPending) = tellStatusToSender(AskControlMessage(message, asker, vc, inspectedTrans, isBlocked))
-        if(!isPending) {
+        val (tellControlMessage, isPending) = tellStatusToSender(AskControlMessage(message, asker, vc, inspectedTrans, isBlocked))
+        if (!isPending) {
           sender() ! tellControlMessage
         }
 
@@ -582,29 +585,29 @@ abstract class SecureActor extends Actor{
       // raises exception if doesn't have the trans
       val recvTrans = receivedResponse.filterKeys(_._1 == transition)
       val recvTransWithVC = recvTrans.filterKeys(_._2(hash) == msgVC(hash))
-      for((inspected, rcvResp) <- recvTransWithVC){
-        val newRcvResp:  Vector[(MyTransition, Array[Int], String)] = rcvResp ++ repRecs
+      for ((inspected, rcvResp) <- recvTransWithVC) {
+        val newRcvResp: Vector[(MyTransition, Array[Int], String)] = rcvResp ++ repRecs
         receivedResponse += (inspected -> newRcvResp)
       }
       val pendingTrans = pendingAsk.filterKeys(_._1 == transition)
       val pendingTransWithVC = pendingTrans.filterKeys(_._2(hash) == msgVC(hash))
-      for((pending, transList) <- pendingTransWithVC){
-        val newTransList : Vector[(MyTransition, Array[Int])] = transList filterNot (message,msgVC).==
+      for ((pending, transList) <- pendingTransWithVC) {
+        val newTransList: Vector[(MyTransition, Array[Int])] = transList filterNot (message, msgVC).==
         //it should update the pendingAsk map
-        pendingAsk += (pending ->  newTransList)
-        if (newTransList.length == 0){
+        pendingAsk += (pending -> newTransList)
+        if (newTransList.length == 0) {
           relaxedTellCheck(pending._1, pending._2, false)
         }
       }
-    case NormalMessageWithVectorClock(message,vc) =>
+    case NormalMessageWithVectorClock(message, vc) =>
       //increment vectorClock
       updateVectorClock(vc)
-      if(unNotified.isEmpty) {
+      if (unNotified.isEmpty) {
         //here we don't send
         vectorClock(hash) += 1
         self ! message
       } else
-        stashNormalQueue = stashNormalQueue :+ NormalMessageWithVectorClock(message,vc)
+        stashNormalQueue = stashNormalQueue :+ NormalMessageWithVectorClock(message, vc)
   }
 
 //  val manageNormals: Receive = {
@@ -612,7 +615,7 @@ abstract class SecureActor extends Actor{
 //  }
 
   //user should write it
-  //def receive = manageControls//.orElse(manageNormals)
+  def receive = manageControls//.orElse(manageNormals)
 
   def tellStatusToSender(message: AskControlMessage): (TellControlMessage, Boolean) ={
     var res:  Vector[(MyTransition, Array[Int], String)] = Vector()
