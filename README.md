@@ -9,7 +9,7 @@ jdk
 sbt
 ```
 First, export the project to a JAR file. You can use the `build artifacts` section of *IntelliJ* and access the JAR file in the *out* folder in the project directory.
-After that, import the JAR file in your Akka application. In IntelliJ, you can import it via `Project Structure -> Modules -> Dependencies -> +`.
+Copy the JAR file to your Akka application directory called lib. After that, import the JAR file in your Akka application. In IntelliJ, you can import it via `Project Structure -> Modules -> Dependencies -> +`.
 
 
 ### Writing Your Akka Application
@@ -27,6 +27,8 @@ To use the algorithm you have to do the following:
 ``` sendSecureMessage(receiver, msg)``` <br/>
  <br/>
 ``` sender ! SendOrderMessage(receiver, msg)``` <br/>
+
+* `dfa.json` file, describing the automata in JSON format. The file should be in your project's most outer directory.
 
 ## Contribution
 Please send an email to [me](mailto:sina.nabavi16@gmail.com).
