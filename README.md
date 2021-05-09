@@ -1,5 +1,5 @@
 # secured-akka
-A monitoring algorithm for Akka applications. After importing `secured-akka` you are able to send messages securely via sending the `SendSecureMessage` to the sender Actor.
+A monitoring algorithm for Akka applications. After importing `secured-akka` in your Akka application you are able to send messages securely via sending the `SendSecureMessage` to the sender Actor.
 
 ## Getting Started
 ### Prerequisites
