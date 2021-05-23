@@ -47,12 +47,13 @@ object MyControlAwareMailbox {
       //Do not merge this with master because Envelope might not like to be interfered with
       // Second way is to do not send stashed to self but pure normal that ruins permutation
       if(!stashedQueue.isEmpty){
-        print("Stashed Message Polled")
         val stashedMsg = stashedQueue.poll()
-        Envelope(stashedMsg.message, stashedMsg.sender)
+        //print("FROM MAILBOX " + stashedMsg.message)
+        //Envelope(stashedMsg.message, stashedMsg.sender)
+        stashedMsg
       }
       //if we want to block the actor wholly we can put a while(unNotified.isempty() == false) here to pop till empty
-      if (!controlQueue.isEmpty) {
+      else if (!controlQueue.isEmpty) {
         val controlMsg = controlQueue.poll()
 //        controlMsg.message match {
 //          case AskControlMessage(MyTransition(from, to, messageBundle, regTransition), asker) ⇒ tellStatusToSender(from, to, messageBundle, regTransition, asker)

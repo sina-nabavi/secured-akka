@@ -23,7 +23,7 @@ import scala.util.{Failure, Success}
 //}
 //we can only transmit vector clock on Normal Message to reduce the cost
 object AutomataObject{
-  val inputFile = "./dfa.json"
+  val inputFile = "./dfa-vio-2.json"
   val automata: Automata = new Automata
   val jsonContent = scala.io.Source.fromFile(inputFile).mkString
   val jsonData = dijon.parse(jsonContent)
@@ -34,7 +34,7 @@ object AutomataObject{
     //println(string)
     //println(jsonData.transitions(string))
     var transList: List[String] = List.empty
-    if(jsonData.transitions(string).toString() != "{}" && jsonData.transitions(string).toString() != "{ }"){
+    if(jsonData.transitions(string).toString() != "{}" && jsonData.transitions(string).toString() != "{ }" && jsonData.transitions.toString() != "{}"){
       transList = jsonData.transitions(string).toString().filterNot(c => c == '{' || c =='}').split(',').map(_.trim).toList
     }
     for(trans <- transList){
@@ -49,16 +49,33 @@ object AutomataObject{
       println(bundle.s + ' ' + bundle.m + ' ' + bundle.r)
       automata.addTransition(transition)
     }
-    val lastList: List[String] = jsonData.final_states.toString().filterNot(c => c == '[' || c ==']').split(',').map(_.trim).toList
-    for(lastState <- lastList){
-      automata.addLastTransition(lastState.replaceAll("^\"|\"$", "").filterNot(c => c == 'q').toInt)
-    }
-    //add vio transitions add
-
   }
 //  for(transition <- jsonData.transitions)
 //    println(transition)
-
+  var lastList: List[String] = List.empty
+  if(jsonData.final_states.toString() != "[]" && jsonData.final_states.toString() != "[ ]") {
+    lastList = jsonData.final_states.toString().filterNot(c => c == '[' || c ==']').split(',').map(_.trim).toList
+  }
+  for(lastState <- lastList){
+    println(lastList.length)
+    automata.addLastTransition(lastState.toString().replaceAll("^\"|\"$", "").filterNot(c => c == 'q').toInt)
+  }
+  var vioList: List[String] = List.empty
+  if(jsonData.backwards.toString() != "[]" && jsonData.backwards.toString() != "[ ]") {
+    vioList  = jsonData.backwards.toString().filterNot(c => c == '[' || c ==']').split(',').map(_.trim).toList
+  }
+  for(vio <- vioList) {
+    val trimmedVio: List[String] = vio.toString().filterNot(c => c == '{' || c =='}').split(' ').map(_.trim).toList
+    var Array(from, msgBndStr, to) = trimmedVio(0).split(':').map(_.trim)
+    msgBndStr = msgBndStr.replaceAll("^\"|\"$", "")
+    val Array(sender, msg, receiver) = msgBndStr.split('-').map(_.trim)
+    from = from.replaceAll("^\"|\"$", "").filterNot(c => c == 'q')
+    to = to.replaceAll("^\"|\"$", "").filterNot(c => c == 'q')
+    val bundle : MessageBundle = new MessageBundle(sender, msg, receiver)
+    val transition: MyTransition = MyTransition(from.toInt, to.toInt, bundle, false)
+    automata.addTransition(transition)
+  }
+  //add vio transitions add
 //  val customAutomata: Automata = new Automata
 //  val customBundle: MessageBundle = new MessageBundle(secondActor, "a0", firstActor)
 //  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
@@ -85,9 +102,9 @@ object SecureActor {
   case class TellControlMessage(message: MyTransition, teller: ActorRef, dest: ActorRef, vc: Array[Int], msgVC: Array[Int], inspectedTransition: MyTransition, repRecs: Vector[(MyTransition, Array[Int], String)]) extends MyControlMessage
   case class NotifyControlMessage(asker: ActorRef, vc: Array[Int]) extends MyControlMessage
   case class StashedNormalMessage(message: NormalMessageWithVectorClock) extends StashedMessage
-  case class StashedAskMessage(message: AskControlMessage) extends StashedMessage
+  case class StashedAskMessage(message: AskControlMessage, sender: ActorRef) extends StashedMessage
   //Did not include here to make it transparent
-  case class SendOrderMessage(to: ActorRef, message: Any, first: ActorRef, isThird: Boolean)
+  case class SendOrderMessage(to: ActorRef, message: Any, first: ActorRef)
   //case class SetAutomata(automata:Automata)
 }
 
@@ -106,7 +123,7 @@ class SecureActor extends Actor{
   //history defined here, i guess this is right, but maybe you need to change it.
   var history: Vector[(MyTransition, Array[Int], String)] = Vector[(MyTransition, Array[Int], String)]()
   var stashNormalQueue: Vector[NormalMessageWithVectorClock] = Vector[NormalMessageWithVectorClock]()
-  var stashAskQueue: Vector[AskControlMessage] = Vector[AskControlMessage]()
+  var stashAskQueue: Vector[(AskControlMessage, ActorRef)] = Vector[(AskControlMessage, ActorRef)]()
   //make this transition
   var pendingAsk: Map[(MyTransition, Array[Int]), Vector[(MyTransition, Array[Int])]]= Map() // immutable
   var receivedResponse: Map[(MyTransition, Array[Int]), Vector[(MyTransition, Array[Int], String)]] = Map()
@@ -176,12 +193,19 @@ class SecureActor extends Actor{
 ////    actorRef.value.get.get
 //
 //  }
+  def vectorClockEquals(vc1: Array[Int], vc2: Array[Int]): Boolean={
+    for(i <- 0 to MaxActorNumber - 1){
+      if(vc1(i) != vc2(i))
+        false
+    }
+    true
+  }
   def vectorClockLess(vc1: Array[Int], vc2: Array[Int]): Boolean={
     for(i <- 0 to MaxActorNumber - 1){
       if(vc1(i) > vc2(i))
         false
     }
-    !(vc1 == vc2)
+    !(vectorClockEquals(vc1, vc2))
   }
 
   def vectorClockConcurent(vc1: Array[Int], vc2: Array[Int]): Boolean={
@@ -193,21 +217,22 @@ class SecureActor extends Actor{
       if(vc1(i) > vc2(i))
         hasGreater = true
     }
-    (hasLess && hasGreater) || (vc1 == vc2)
+    (hasLess && hasGreater) || vectorClockEquals(vc1,vc2)
   }
 
   def vectorClockNotGreater(vc1: Array[Int], vc2: Array[Int]): Boolean={
     vectorClockLess(vc1,vc2) || vectorClockConcurent(vc1,vc2)
   }
 
+  //Should not this be vios and pres???
   def sendNotifications(transitions:Vector[MyTransition], automata: Automata): Unit={
-    Thread.sleep(5000)
-    var allPres: Vector[MyTransition] = Vector.empty[MyTransition]
+    //Thread.sleep(5000)
+    var allPresAndVios: Vector[MyTransition] = Vector.empty[MyTransition]
     for (transition <- transitions) {
-      val pres: Vector[MyTransition] = automata.singleFindPre(transition)
-      allPres = allPres ++ pres
+      val presAndVios: Vector[MyTransition] = automata.singleFindPre(transition) ++ automata.singleFindVio(transition)
+      allPresAndVios = allPresAndVios ++ presAndVios
     }
-    for (pre ← allPres) {
+    for (pre ← allPresAndVios) {
       val msg: MessageBundle = pre.messageBundle
       val notifMsg = NotifyControlMessage(self,vectorClock)
 //      val preSender = findactorByName(msg.s)
@@ -275,12 +300,13 @@ class SecureActor extends Actor{
             Await.result(all, SecureActor.OverallTimeOut * timeOutMultiplier)
             // Await.result(all, SecureActor.OverallTimeOut * timeOutMultiplier)
             // Await.result(all, Duration.Inf)
-            println("va complete shod " + timeOutMultiplier)
+            println("It is completed " + timeOutMultiplier)
             for (tellRes <- all.value.get.get) {
               val newRcvResp:  Vector[(MyTransition, Array[Int], String)] = receivedResponse(tellRes.inspectedTransition, vectorClock) ++ tellRes.repRecs
               receivedResponse += ((tellRes.inspectedTransition, vectorClock) -> newRcvResp)
               updateVectorClock(tellRes.vc)
             }
+            //is it okay to send our own vectorClock?
             val result = relaxedTellCheck(transition, vectorClock, true)
             done = true
             //context.unbecome()
@@ -293,7 +319,7 @@ class SecureActor extends Actor{
             }
           } catch {
             case e: TimeoutException => {
-              println(" I have a timeout EXCEPTION")
+              println(" I have a timeout EXCEPTION " + name)
               timeOutMultiplier *= 2
             }
           }
@@ -309,9 +335,9 @@ class SecureActor extends Actor{
     //false
   }
 
-  def sendSecureMessage(receiver: ActorRef, message: NormalMessage): Unit = {
+  def sendSecureMessage(receiver: ActorRef, message: Any): Unit = {
     // assume that we have the automata in the Actor
-    val msgBundle: MessageBundle = new MessageBundle(self.path.name, message.message, receiver.path.name)
+    val msgBundle: MessageBundle = new MessageBundle(self.path.name, message, receiver.path.name)
     //for all transitions
     val transitions = automata.findTransitionByMessageBundle(msgBundle)
     var isLast: Boolean = false
@@ -321,9 +347,9 @@ class SecureActor extends Actor{
       }
     }
     if(isLast)
-      sendBlocking(receiver, message, transitions)
+      sendBlocking(receiver, NormalMessage(message), transitions)
     else
-      sendNonBlocking(receiver, message, transitions)
+      sendNonBlocking(receiver, NormalMessage(message), transitions)
   }
 
   def sendNonBlocking(receiver: ActorRef, message: SecureActor.NormalMessage, transitions: Vector[MyTransition]): Unit = {
@@ -418,7 +444,6 @@ class SecureActor extends Actor{
     }
     else {
       for (triple <- presTriple) {
-          //add the vio condition
           if (vectorClockNotGreater(triple._2, vc)) {
             var vioLessChecker: Boolean = false
             var concurrencyChecker: Boolean = true
@@ -458,6 +483,7 @@ class SecureActor extends Actor{
         history = history filterNot (inspected, vc, "?").==
       }
     }
+
     handlePending(inspected)
     if(historyUpdate & isBlocking)
       true
@@ -525,13 +551,13 @@ class SecureActor extends Actor{
     //    case SetAutomata(aut) => {
     //      automata = aut
     //    }
-    case SendOrderMessage(to, message, first: ActorRef, isThird) => {
+    case SendOrderMessage(to, message, first: ActorRef) => {
       //      if(isThird) {
       //        Thread.sleep(11000)
       //        println("Sending ASK Message from third actor to be processed by manageAsks")
       //        first ! AskControlMessage(null, null, null, null, null, false)
       //      } else
-      sendSecureMessage(to, NormalMessage(message))
+      sendSecureMessage(to, message)
     }
     case ErrorMessage(vc) => {
       updateVectorClock(vc)
@@ -545,19 +571,34 @@ class SecureActor extends Actor{
       // i assume that here unnotified just became empty cause we dont get notify message
       // unless we have something in unnotified so if its empty now it's just became empty
       if (unNotified.isEmpty) {
+        println("unnotified became empty " + name)
         while (!stashAskQueue.isEmpty) {
           //Here that we have stashed should we change the vector clock of the stashed messages
           //Update: I changed it to be the simpler version and send the old message with the old vc
-          self ! stashAskQueue.last
+          self ! StashedAskMessage(stashAskQueue.last._1, stashAskQueue.last._2)
           stashAskQueue = stashAskQueue.init
         }
         while (!stashNormalQueue.isEmpty) {
-          self ! stashNormalQueue.last
+          self ! StashedNormalMessage(stashNormalQueue.last)
           stashNormalQueue = stashNormalQueue.init
         }
       }
     }
 
+    case StashedNormalMessage(message) =>
+      updateVectorClock(message.vc)
+      vectorClock(hash) += 1
+      self ! message.message
+
+    case StashedAskMessage(AskControlMessage(message, asker, vc, inspectedTrans, isBlocked), sender) =>
+      updateVectorClock(vc)
+      println("Stashed Ask Message " + " " + self.path.name + " " + message.messageBundle.m + " " + message._regTransition)
+      //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
+      val (tellControlMessage, isPending) = tellStatusToSender(AskControlMessage(message, asker, vc, inspectedTrans, isBlocked))
+      if (!isPending) {
+        println("I am sending tell to " + tellControlMessage.dest)
+        sender ! tellControlMessage
+      }
     case AskControlMessage(message, asker, vc, inspectedTrans, isBlocked) =>
       //      if(inspectedTrans.messageBundle.m == "b1"){
       //        println("my message is b1 and I am going to sleep zzzz " + self.path)
@@ -565,23 +606,27 @@ class SecureActor extends Actor{
       //      }
       updateVectorClock(vc)
       if (unNotified.isEmpty) {
-        println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m)
+        println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m + " " + message._regTransition)
         //val tellControlMessage: TellControlMessage = tellStatusToSender(message.from, message.to, message.messageBundle,message.regTransition,asker)
         val (tellControlMessage, isPending) = tellStatusToSender(AskControlMessage(message, asker, vc, inspectedTrans, isBlocked))
         if (!isPending) {
+          //IT IS REALLY WEIRD BUT STIMES ASKER AND SENDER ARE NOT EQUAL
+          //MAYBE IT IS BECAUSE OF FUTURES AS AKKA HAS MADE A SEPARATE ACTOR FOR THAT FUTURE
+          println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m + " " + message._regTransition + " " + asker + " " + sender.path)
           sender() ! tellControlMessage
         }
 
       }
       else {
         val askmsg: AskControlMessage = AskControlMessage(message, asker, vc, inspectedTrans, isBlocked)
-        stashAskQueue = stashAskQueue :+ askmsg
+        stashAskQueue = stashAskQueue :+ (askmsg, sender)
+        println("STASH ASK SIZE IS " + stashAskQueue.length)
       }
 
     //stashing ?
     case TellControlMessage(message, teller, dest, vc, msgVC, transition, repRecs) =>
       updateVectorClock(vc)
-      println("I CAUGHT A TELL CONTROL MESSAGE")
+      println("I CAUGHT A TELL CONTROL MESSAGE from " + dest + " " + name)
       // raises exception if doesn't have the trans
       val recvTrans = receivedResponse.filterKeys(_._1 == transition)
       val recvTransWithVC = recvTrans.filterKeys(_._2(hash) == msgVC(hash))
@@ -667,8 +712,11 @@ class SecureActor extends Actor{
 //      }
 //    }
     if (!isPending) {
-      if (message.isBlocked)
+      if (message.isBlocked) {
+
         unNotified = unNotified :+ message.asker
+        println("unnotified size became " + unNotified.length)
+      }
     }
     //TODO check history and automata, send a tell message to sender with msg and true/false, sender will erase that msg from his "Pres set"
     //change vectorClock to ask's vectorclock
@@ -696,31 +744,30 @@ class SecureActor extends Actor{
 //}
 
 //
-//object MainApp extends App {
-//  import SecureActor._
-//  val system: ActorSystem = ActorSystem("helloAkka")
-//  val firstActor: ActorRef =
-//    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
-//  val secondActor: ActorRef =
-//    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
-// // val thirdActor: ActorRef =
-//    //system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"thirdActor")
-////  val customAutomata: Automata = new Automata
-////  val customBundle: MessageBundle = new MessageBundle(secondActor, "a0", firstActor)
-////  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
-////  val customBundle2: MessageBundle = new MessageBundle(firstActor, "b1",secondActor)
-////  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
-////  customAutomata.addTransition(customTransition)
-////  customAutomata.addTransition(customTransition2)
-////  customAutomata.addLastTransition(2)
-//  //secondActor ! SetAutomata(customAutomata)
-//  //firstActor ! SetAutomata(customAutomata)
-// // thirdActor ! SetAutomata(customAutomata)
-//  println(firstActor.path.name)
-//  secondActor ! SendOrderMessage(firstActor, "a0", firstActor, false)
-////  secondActor ! SendOrderMessage(secondActor, "c2", firstActor, false)
-//  firstActor ! SendOrderMessage(secondActor, "b1", firstActor, false)
-//  //thirdActor ! SendOrderMessage(firstActor, "b1", firstActor, true)
-////  secondActor ! SendOrderMessage(secondActor, "c1", firstActor, false)
-//
-//}
+object MainApp extends App {
+  import SecureActor._
+  val system: ActorSystem = ActorSystem("helloAkka")
+  val firstActor: ActorRef =
+    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"firstActor")
+  val secondActor: ActorRef =
+    system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"secondActor")
+ // val thirdActor: ActorRef =
+    //system.actorOf(SecureActor.props().withDispatcher("custom-dispatcher"),"thirdActor")
+//  val customAutomata: Automata = new Automata
+//  val customBundle: MessageBundle = new MessageBundle(secondActor, "a0", firstActor)
+//  val customTransition: MyTransition = MyTransition(0,1, customBundle ,true)
+//  val customBundle2: MessageBundle = new MessageBundle(firstActor, "b1",secondActor)
+//  val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
+//  customAutomata.addTransition(customTransition)
+//  customAutomata.addTransition(customTransition2)
+//  customAutomata.addLastTransition(2)
+  //secondActor ! SetAutomata(customAutomata)
+  //firstActor ! SetAutomata(customAutomata)
+ // thirdActor ! SetAutomata(customAutomata)
+  secondActor ! SendOrderMessage(firstActor, "a0", firstActor)
+//  secondActor ! SendOrderMessage(secondActor, "c2", firstActor, false)
+  firstActor ! SendOrderMessage(secondActor, "b1", firstActor)
+  //thirdActor ! SendOrderMessage(firstActor, "b1", firstActor, true)
+//  secondActor ! SendOrderMessage(secondActor, "c1", firstActor, false)
+
+}

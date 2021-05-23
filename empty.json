@@ -1,0 +1,9 @@
+{
+"casuality sequences": [],
+"Non casuality sequences": [["(C,a2,A)", "(E,a2,A)", "(F,c5,C)", "(A,c5,C)"], ["(E,c2,C)", "(C,f0,F)", "(E,c5,C)", "(E,a2,A)"], ["(E,c5,C)", "(E,c3,C)", "(E,a1,A)", "(E,a2,A)"]],
+"states": [],
+"initial_state": "",
+"transitions": {},
+"final_states": [],
+"backwards": []
+}

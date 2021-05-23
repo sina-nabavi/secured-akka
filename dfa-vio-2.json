@@ -1,0 +1,12 @@
+{
+"casuality sequences": [],
+"Non casuality sequences": [["(B,a2,A)", "(D,b2,B)", "(A,b1,B)", "(B,a1,A)", "(B,d2,D)"], ["(B,a2,A)", "(D,b2,B)", "(A,b1,B)", "(B,a1,A)", "(C,b2,B)"], ["(B,d2,D)", "(C,b2,B)", "(D,b0,B)", "(B,d0,D)", "(D,b2,B)"], ["(C,b3,B)", "(D,b2,B)", "(A,b1,B)", "(B,a1,A)", "(D,b0,B)"]],
+"states": ["q0", "q1","q2"],
+"initial_state": "q0",
+"transitions": {"q0": {"secondActor-a0-firstActor": "q1"},
+     "q1": {"firstActor-b1-secondActor": "q2"},
+	 "q2": {}
+},
+"final_states": ["q2"],
+"backwards": [{"q2": {"secondActor-c0-firstActor":"q0"} }]
+}
