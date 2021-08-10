@@ -23,7 +23,7 @@ import scala.util.{Failure, Success}
 //}
 //we can only transmit vector clock on Normal Message to reduce the cost
 object AutomataObject{
-  val inputFile = "./dfa-vio-2.json"
+  val inputFile = "./dfa.json"
   val automata: Automata = new Automata
   val jsonContent = scala.io.Source.fromFile(inputFile).mkString
   val jsonData = dijon.parse(jsonContent)
@@ -612,7 +612,6 @@ class SecureActor extends Actor{
         if (!isPending) {
           //IT IS REALLY WEIRD BUT STIMES ASKER AND SENDER ARE NOT EQUAL
           //MAYBE IT IS BECAUSE OF FUTURES AS AKKA HAS MADE A SEPARATE ACTOR FOR THAT FUTURE
-          println("Ask Message " + " " + self.path.name + " " + message.messageBundle.m + " " + message._regTransition + " " + asker + " " + sender.path)
           sender() ! tellControlMessage
         }
 
@@ -620,13 +619,12 @@ class SecureActor extends Actor{
       else {
         val askmsg: AskControlMessage = AskControlMessage(message, asker, vc, inspectedTrans, isBlocked)
         stashAskQueue = stashAskQueue :+ (askmsg, sender)
-        println("STASH ASK SIZE IS " + stashAskQueue.length)
       }
 
     //stashing ?
     case TellControlMessage(message, teller, dest, vc, msgVC, transition, repRecs) =>
       updateVectorClock(vc)
-      println("I CAUGHT A TELL CONTROL MESSAGE from " + dest + " " + name)
+      println("Tell Message " + " " + self.path.name + " " + dest + " " + name)
       // raises exception if doesn't have the trans
       val recvTrans = receivedResponse.filterKeys(_._1 == transition)
       val recvTransWithVC = recvTrans.filterKeys(_._2(hash) == msgVC(hash))

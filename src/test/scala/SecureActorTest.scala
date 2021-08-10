@@ -3,7 +3,7 @@ import akka.actor.AbstractActor.Receive
 import com.{Automata, MessageBundle, MyTransition, SecureActor}
 import akka.actor.{ActorPath, ActorRef, ActorSystem, Props}
 import akka.testkit.{DefaultTimeout, ImplicitSender, TestActorRef, TestKit, TestProbe}
-import com.SecureActor.{AskControlMessage, ErrorMessage, NormalMessage, TellControlMessage}
+import com.SecureActor.{AskControlMessage, ErrorMessage, NormalMessage, NormalMessageWithVectorClock, StashedNormalMessage, TellControlMessage}
 import com.typesafe.config.ConfigFactory
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.matchers.must.Matchers
@@ -20,6 +20,34 @@ class SecureActorTest
   with Matchers
   with BeforeAndAfterAll{
 
+
+  "message ordering" should {
+    "prioritize stashed over control and control over normal" in {
+      val customBundle: MessageBundle = new MessageBundle("secondActor", "a0", "firstActor")
+      val customTransition: MyTransition = MyTransition(0, 1, customBundle, true)
+      val customBundle2: MessageBundle = new MessageBundle("firstActor", "b1", "secondActor")
+      val customTransition2: MyTransition = MyTransition(1, 2, customBundle2, true)
+      val actorB = TestProbe()
+      val actorRefA: TestActorRef[SecureActor] = TestActorRef(SecureActor.props().withDispatcher("custom-dispatcher"), "firstActor")
+      val actorA = actorRefA.underlyingActor
+      val actorRefB: TestActorRef[SecureActor] = TestActorRef(Props(new SecureActor() {
+        val manageError : Receive = {case msg => actorB.ref ! msg }
+        override def receive = manageError.orElse(manageControls)
+      }).withDispatcher("custom-dispatcher"), "secondActor")
+      actorRefB ! NormalMessage("test")
+      actorRefB ! AskControlMessage(customTransition, actorRefA , actorA.vectorClock, customTransition, true)
+      actorRefB ! StashedNormalMessage(NormalMessageWithVectorClock("test", actorA.vectorClock))
+      actorB.expectMsgPF(){
+        case NormalMessage(msg) =>
+      }
+      actorB.expectMsgPF(){
+        case StashedNormalMessage(normalMessageWithVectorClock) =>
+      }
+      actorB.expectMsgPF(){
+        case AskControlMessage(tr, actorRefA , vc , trInspccted, regTrans) =>
+      }
+    }
+  }
   "relaxed tell check blocking error" should {
     "go into second if and update history and send error" in {
       val customBundle: MessageBundle = new MessageBundle("secondActor", "a0", "firstActor")
